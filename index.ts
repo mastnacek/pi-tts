@@ -31,6 +31,8 @@ const DEFAULTS: TtsConfig = {
 
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
 const SPEAK_PY = join(EXT_DIR, "speak.py");
+// Cooperative stop flag, scoped to this pi process (never stale across restarts).
+const STOP_FILE = join(tmpdir(), `pi-tts-stop-${process.pid}`);
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-tts.json");
 
 function loadConfig(): TtsConfig {
@@ -71,6 +73,11 @@ export default function (pi: ExtensionAPI) {
 	let speakSeq = 0;
 
 	function stopSpeaking() {
+		// Cooperative stop first: python is polling this file and kills its own
+		// player (works even if the parent chain is already gone/stale).
+		try {
+			writeFileSync(STOP_FILE, String(Date.now()));
+		} catch {}
 		if (current && current.exitCode === null) {
 			if (process.platform === "win32") {
 				// current.kill() only terminates python.exe — the spawned
@@ -102,6 +109,11 @@ export default function (pi: ExtensionAPI) {
 		if (!text.trim()) return;
 		stopSpeaking();
 
+		// Clear any stale stop flag so the new playback isn't instantly killed.
+		try {
+			await unlink(STOP_FILE);
+		} catch {}
+
 		// Write text to temp file — avoids argv length/quoting issues
 		const seq = ++speakSeq;
 		const tmpFile = join(tmpdir(), `pi-tts-${process.pid}-${seq}.txt`);
@@ -126,11 +138,15 @@ export default function (pi: ExtensionAPI) {
 				args.push("--depth", String(config.vaderDepth));
 		}
 
-		const child = spawn("python", args, {
-			detached: process.platform !== "win32",
-			stdio: ["ignore", "ignore", "pipe"],
-			env: { ...process.env, PI_TTS_MAXLEN: String(config.maxLen) },
-		});
+	const child = spawn("python", args, {
+		detached: process.platform !== "win32",
+		stdio: ["ignore", "ignore", "pipe"],
+		env: {
+			...process.env,
+			PI_TTS_MAXLEN: String(config.maxLen),
+			PI_TTS_STOP_FILE: STOP_FILE,
+		},
+	});
 		current = child;
 		let stderr = "";
 		child.stderr?.on("data", (d) => (stderr += d));

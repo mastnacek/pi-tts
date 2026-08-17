@@ -34,6 +34,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import time
 
 WINRT_PS1 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "winrt_speak.ps1")
 
@@ -44,6 +45,27 @@ try:
     MAX_TEXT_LENGTH = int(os.environ.get("PI_TTS_MAXLEN", "1500"))
 except ValueError:
     MAX_TEXT_LENGTH = 1500
+
+# Cooperative stop: the extension touches this file to make us kill the
+# player immediately. More reliable than parent-side tree kills, which can
+# miss re-parented or stale players.
+STOP_FILE = os.environ.get("PI_TTS_STOP_FILE")
+STOP_POLL_SECONDS = 0.15
+PLAY_TIMEOUT_SECONDS = 120
+
+
+def _stop_requested() -> bool:
+    return bool(STOP_FILE) and os.path.exists(STOP_FILE)
+
+
+def _wait_playing(proc: subprocess.Popen) -> None:
+    """Wait for the player, honoring the stop file and a hard timeout."""
+    deadline = time.monotonic() + PLAY_TIMEOUT_SECONDS
+    while proc.poll() is None:
+        if _stop_requested() or time.monotonic() > deadline:
+            proc.kill()
+            return
+        time.sleep(STOP_POLL_SECONDS)
 
 # --- Vader mode -------------------------------------------------------------
 # Voice params the Vader effect assumes; used only when the caller left
@@ -106,10 +128,10 @@ def have(cmd: str) -> bool:
 
 
 def play_file(path: str):
-    """Play audio file with whatever player exists."""
+    """Play audio file with whatever player exists, stoppable via the stop file."""
     if have("ffplay"):
-        subprocess.run(
-            ["ffplay", "-autoexit", "-nodisp", "-loglevel", "quiet", path], timeout=120
+        proc = subprocess.Popen(
+            ["ffplay", "-autoexit", "-nodisp", "-loglevel", "quiet", path]
         )
     elif platform.system() == "Windows":
         ps = (
@@ -119,13 +141,15 @@ def play_file(path: str):
             "while ($p.NaturalDuration.HasTimeSpan -eq $false) { Start-Sleep -Milliseconds 200 };"
             "Start-Sleep $p.NaturalDuration.TimeSpan.TotalSeconds; $p.Close()"
         )
-        subprocess.run(["powershell", "-NoProfile", "-Command", ps], timeout=120)
+        proc = subprocess.Popen(["powershell", "-NoProfile", "-Command", ps])
     elif have("mpg123"):
-        subprocess.run(["mpg123", "-q", path], timeout=120)
+        proc = subprocess.Popen(["mpg123", "-q", path])
     elif have("aplay") and path.endswith(".wav"):
-        subprocess.run(["aplay", "-q", path], timeout=120)
+        proc = subprocess.Popen(["aplay", "-q", path])
     else:
         sys.stderr.write("pi-tts: no audio player found (need ffplay/mpg123)\n")
+        return
+    _wait_playing(proc)
 
 
 def apply_vader(raw_path: str, out_path: str, depth: float = 0.0) -> str:
@@ -226,6 +250,8 @@ async def speak_edge(
             sys.stderr.write("pi-tts: TLS interception detected, retrying with system CA store\n")
             edge_communicate._SSL_CTX = relaxed_ssl_context()
             await synth()
+        if _stop_requested():
+            return
         play_path = (
             apply_vader(raw_path, os.path.join(tmp_dir, "vader.mp3"), depth) if vader else raw_path
         )
@@ -326,6 +352,8 @@ def speak_native(
                 ok = synth_sapi(text, sapi_voice, rate_pct, wav_path)
             if not ok:
                 sys.stderr.write("pi-tts: native synthesis failed\n")
+                return
+            if _stop_requested():
                 return
             play_path = (
                 apply_vader(wav_path, os.path.join(tmp_dir, "vader.mp3"), depth)
