@@ -72,7 +72,28 @@ export default function (pi: ExtensionAPI) {
 
 	function stopSpeaking() {
 		if (current && current.exitCode === null) {
-			current.kill();
+			if (process.platform === "win32") {
+				// current.kill() only terminates python.exe — the spawned
+				// powershell/ffplay player is orphaned and keeps playing the file.
+				// taskkill /T takes down the whole tree, /F because we mean it.
+				if (current.pid !== undefined) {
+					spawn(
+						"taskkill",
+						["/pid", String(current.pid), "/T", "/F"],
+						{ stdio: "ignore" },
+					);
+				}
+				current.kill();
+			} else {
+				// POSIX: python was spawned detached (process-group leader),
+				// so a negative-pid kill takes ffplay down with it.
+				try {
+					if (current.pid !== undefined)
+						process.kill(-current.pid, "SIGTERM");
+				} catch {
+					current.kill();
+				}
+			}
 		}
 		current = null;
 	}
@@ -106,7 +127,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const child = spawn("python", args, {
-			detached: false,
+			detached: process.platform !== "win32",
 			stdio: ["ignore", "ignore", "pipe"],
 			env: { ...process.env, PI_TTS_MAXLEN: String(config.maxLen) },
 		});
