@@ -195,8 +195,8 @@ export default function (pi: ExtensionAPI) {
 					lastSpokenAt = Date.now();
 					lastError = "";
 					await speak(text);
+					return;
 				}
-				return;
 			}
 		}
 	});
