@@ -31,6 +31,16 @@ const DEFAULTS: TtsConfig = {
 
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
 const SPEAK_PY = join(EXT_DIR, "speak.py");
+// Windows ships "python"; Linux distros often only have "python3".
+function findPython(): string {
+	if (process.platform === "win32") return "python";
+	for (const candidate of ["python3", "python"]) {
+		const dirs = (process.env.PATH ?? "").split(":");
+		if (dirs.some((d) => existsSync(join(d, candidate)))) return candidate;
+	}
+	return "python3";
+}
+const PYTHON = findPython();
 // Cooperative stop flag, scoped to this pi process (never stale across restarts).
 const STOP_FILE = join(tmpdir(), `pi-tts-stop-${process.pid}`);
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-tts.json");
@@ -110,9 +120,12 @@ export default function (pi: ExtensionAPI) {
 		stopSpeaking();
 
 		// Clear any stale stop flag so the new playback isn't instantly killed.
+		// Missing file is the expected case — ignore unlink failures.
 		try {
 			await unlink(STOP_FILE);
-		} catch {}
+		} catch {
+			// noop
+		}
 
 		// Write text to temp file — avoids argv length/quoting issues
 		const seq = ++speakSeq;
@@ -138,7 +151,7 @@ export default function (pi: ExtensionAPI) {
 				args.push("--depth", String(config.vaderDepth));
 		}
 
-	const child = spawn("python", args, {
+	const child = spawn(PYTHON, args, {
 		detached: process.platform !== "win32",
 		stdio: ["ignore", "ignore", "pipe"],
 		env: {
@@ -244,9 +257,9 @@ export default function (pi: ExtensionAPI) {
 						config.backend = value;
 						saveConfig(config);
 						ctx.ui.notify(
-							value === "edge"
+value === "edge"
 								? "Backend set to edge (cloud neural voices)"
-								: "Backend set to native (offline Windows voices)",
+								: `Backend set to native (offline ${process.platform === "win32" ? "Windows" : process.platform === "darwin" ? "macOS" : "Linux"} voices)`,
 							"info",
 						);
 					} else {

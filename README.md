@@ -6,16 +6,21 @@ manually via `/audio`.
 
 - **Edge backend** — Microsoft cloud neural voices via `edge-tts` (needs network + Python)
 - **Native backend** — fully offline: Windows WinRT (OneCore voices, e.g. cs-CZ
-  Jakub) with SAPI5 fallback; Linux `spd-say`/`espeak`
+  Jakub) with SAPI5 fallback; Linux `espeak-ng`/`espeak` (voice, rate and pitch
+  derived from the configured voice's locale) with a `spd-say` streaming fallback
 - **Vader mode** — ffmpeg filter chain (EQ + flanger + echo + rubberband pitch)
-  tuned for a Darth Vader delivery; falls back to plain audio without ffmpeg
+  tuned for a Darth Vader delivery; works on edge and on any native backend that
+  can render a WAV (WinRT/SAPI5/espeak); falls back to plain audio without ffmpeg
 
 ## Requirements
 
-- Python 3 on PATH (`python`)
+- Python 3 on PATH (`python` on Windows, `python3` or `python` elsewhere)
 - `pip install -r requirements.txt` (only for the `edge` backend)
 - ffmpeg + ffplay — optional, needed for the Vader effect and as the preferred player
-- Windows PowerShell 5.1 — used by the native backend (`powershell.exe`)
+- Native backend engines:
+  - Windows: PowerShell 5.1 (`powershell.exe`, preinstalled)
+  - Linux: `espeak-ng` or `espeak` (recommended — enables voice/rate/pitch control
+    and native Vader), otherwise `spd-say` as a plain streaming fallback
 
 ## Install
 

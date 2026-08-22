@@ -192,7 +192,10 @@ def is_cert_error(exc: BaseException) -> bool:
         seen.add(id(exc))
         if isinstance(exc, ssl.SSLCertVerificationError):
             return True
-        exc = exc.__cause__ or exc.__context__
+        next_exc = exc.__cause__ or exc.__context__
+        if next_exc is None:
+            break
+        exc = next_exc
     return False
 
 
@@ -220,8 +223,8 @@ def relaxed_ssl_context() -> ssl.SSLContext:
 async def speak_edge(
     text: str, voice: str, rate: str, pitch: str, vader: bool = False, depth: float = 0.0
 ):
-    import edge_tts
-    import edge_tts.communicate as edge_communicate
+    import edge_tts  # pyright: ignore[reportMissingImports] — runtime dep from requirements.txt
+    import edge_tts.communicate as edge_communicate  # pyright: ignore[reportMissingImports]
 
     # aiohttp's proactor transport raises ConnectionResetError while tearing
     # down an already-finished stream on Windows; it is pure noise.
@@ -306,6 +309,69 @@ def synth_winrt(text: str, voice: str, rate: str, pitch: str, out_wav: str) -> b
     return True
 
 
+def _locale_of(voice: str | None) -> str | None:
+    """Extract an espeak-style language tag from a voice name.
+
+    Edge-style names carry the locale: cs-CZ-AntoninNeural -> cs,
+    en-GB-RyanNeural -> en-gb. Plain names are returned as-is.
+    """
+    if not voice:
+        return None
+    m = re.match(r"^([a-z]{2}(?:-[A-Za-z]{2})?)-", voice)
+    return m.group(1).lower() if m else voice.lower()
+
+
+def _hz_of(pitch: str | None) -> float | None:
+    m = re.match(r"([+-]?\d+)Hz", pitch or "")
+    try:
+        return float(m.group(1)) if m else None
+    except ValueError:
+        return None
+
+
+def synth_espeak(text: str, voice: str | None, rate_pct: int | None, pitch_hz: float | None, out_wav: str) -> bool:
+    """Render speech to out_wav via espeak-ng/espeak. Returns False if absent."""
+    binary = "espeak-ng" if have("espeak-ng") else ("espeak" if have("espeak") else None)
+    if not binary:
+        return False
+    args = [binary]
+    locale = _locale_of(voice)
+    if locale:
+        args += ["-v", locale]
+    if rate_pct is not None:
+        # espeak speaks words-per-minute; ~170 is the default voice pace.
+        wpm = max(80, min(350, 170 + rate_pct * 20))
+        args += ["-s", str(wpm)]
+    if pitch_hz is not None:
+        # espeak takes a 0..99 scale around ~50 neutral; +-50Hz spans it well.
+        p = max(0, min(99, round(50 + pitch_hz / 2)))
+        args += ["-p", str(p)]
+    args += ["-w", out_wav]
+    txt_path = write_temp_text(text)
+    try:
+        result = subprocess.run(args + [txt_path], capture_output=True, timeout=120)
+    finally:
+        os.unlink(txt_path)
+    if result.returncode != 0 or not os.path.exists(out_wav):
+        detail = result.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        sys.stderr.write(f"pi-tts: espeak synthesis failed: {detail[-1] if detail else '?'}\n")
+        return False
+    return True
+
+
+def stream_spd_say(text: str, rate_pct: int | None) -> bool:
+    """Stream directly through speech-dispatcher. Last-resort Linux path."""
+    if not have("spd-say"):
+        return False
+    args = ["spd-say", "-e"]
+    if rate_pct is not None:
+        args += ["-r", str(rate_pct * 10)]  # spd-say uses -100..100
+    args.append(text)
+    proc = subprocess.Popen(args)
+    _wait_playing(proc)
+    return True
+
+
 def synth_sapi(text: str, voice: str | None, rate_pct: int | None, out_wav: str) -> bool:
     """Render speech to out_wav via System.Speech (SAPI5). Windows only."""
     txt_path = write_temp_text(text)
@@ -364,22 +430,28 @@ def speak_native(
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
     else:
-        if vader:
-            sys.stderr.write("pi-tts: Vader effect is Windows/edge only, speaking plain\n")
-        if have("spd-say"):
-            args = ["spd-say", "-e"]
-            if voice:
-                args += ["-o", voice]
-            if rate_pct is not None:
-                args += ["-r", str(rate_pct * 10)]  # spd-say uses -100..100
-            args.append(text)
-            subprocess.run(args, timeout=120)
-        elif have("espeak-ng"):
-            subprocess.run(["espeak-ng", text], timeout=120)
-        elif have("espeak"):
-            subprocess.run(["espeak", text], timeout=120)
-        else:
-            sys.stderr.write("pi-tts: no native TTS found (spd-say/espeak)\n")
+        # Linux / other POSIX: render offline via espeak when available so the
+        # Vader chain and the shared player apply, exactly like the Windows path.
+        tmp_dir = tempfile.mkdtemp(prefix="pitts_")
+        wav_path = os.path.join(tmp_dir, "native.wav")
+        try:
+            ok = synth_espeak(text, voice, rate_pct, _hz_of(pitch), wav_path)
+            if ok:
+                if _stop_requested():
+                    return
+                play_path = (
+                    apply_vader(wav_path, os.path.join(tmp_dir, "vader.mp3"), depth)
+                    if vader
+                    else wav_path
+                )
+                play_file(play_path)
+            else:
+                if vader:
+                    sys.stderr.write("pi-tts: needs espeak(-ng) for native Vader, speaking plain\n")
+                if not stream_spd_say(text, rate_pct):
+                    sys.stderr.write("pi-tts: no native TTS found (need espeak-ng or spd-say)\n")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def main():
