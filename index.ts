@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { writeFile, unlink } from "node:fs/promises";
@@ -82,6 +82,10 @@ function getPlatformLabel(): string {
 	if (process.platform === "darwin") return "macOS";
 	return "Linux";
 }
+
+// Vader icon: ANSI truecolor half-block pixel art derived from assets/darthvader.gif
+// Dome on top (dark gray/black), mask + silver breathing ports at bottom.
+const VADER_ICON = "\x1b[38;2;25;25;25;48;2;180;180;180m▀\x1b[38;2;10;10;10;48;2;45;45;45m▀\x1b[38;2;25;25;25;48;2;180;180;180m▀\x1b[0m";
 
 export default function (pi: ExtensionAPI) {
 	let config = loadConfig();
@@ -220,7 +224,7 @@ export default function (pi: ExtensionAPI) {
 		if (config.enabled) {
 			ctx.ui.setStatus(
 				"pi-tts",
-				config.vader ? `🔊 ${config.voice} 🪖 vader` : `🔊 ${config.voice}`,
+				config.vader ? `🔊 ${config.voice} ${VADER_ICON} vader` : `🔊 ${config.voice}`,
 			);
 		} else {
 			ctx.ui.setStatus("pi-tts", undefined);

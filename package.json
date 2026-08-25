@@ -1,6 +1,6 @@
 {
 	"name": "pi-tts",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"description": "Pi agent TTS: speaks the final answer via Edge cloud voices or native Windows (WinRT/SAPI5)/Linux engines, with a Darth Vader ffmpeg mode. Controlled by /audio.",
 	"license": "MIT",
 	"author": "mastnacek",
@@ -19,7 +19,8 @@
 		"winrt_speak.ps1",
 		"requirements.txt",
 		"README.md",
-		"LICENSE"
+		"LICENSE",
+		"assets"
 	],
 	"pi": {
 		"extensions": ["./index.ts"]
