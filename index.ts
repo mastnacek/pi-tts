@@ -86,49 +86,6 @@ function getPlatformLabel(): string {
 	return "Linux";
 }
 
-let vaderIconCache: string | null = null;
-
-function getVaderIcon(): string {
-	if (vaderIconCache !== null) return vaderIconCache;
-	try {
-		const candidates = [
-			join(EXT_DIR, "assets", "darthvader-32.png"),
-			join(EXT_DIR, "assets", "darthvader.png"),
-			join(EXT_DIR, "assets", "darthvader.gif"),
-		];
-		for (const candidate of candidates) {
-			if (existsSync(candidate)) {
-				const base64 = readFileSync(candidate).toString("base64");
-				const forced = process.env.PI_TTS_IMAGE_PROTOCOL?.toLowerCase();
-				const termProgram = (process.env.TERM_PROGRAM ?? "").toLowerCase();
-				const isKitty =
-					forced === "kitty" ||
-					(!forced &&
-						Boolean(
-							process.env.KITTY_WINDOW_ID ||
-								termProgram === "kitty" ||
-								termProgram === "ghostty" ||
-								process.env.GHOSTTY_RESOURCES_DIR ||
-								process.env.WEZTERM_PANE ||
-								termProgram === "wezterm" ||
-								termProgram === "warpterminal" ||
-								process.env.WARP_SESSION_ID,
-						));
-
-				if (isKitty) {
-					vaderIconCache = `\x1b_Ga=T,f=100,q=2,C=1,c=2,r=1;${base64}\x1b\\`;
-				} else {
-					vaderIconCache = `\x1b]1337;File=inline=1;width=2;height=1;preserveAspectRatio=1:${base64}\x07`;
-				}
-				return vaderIconCache;
-			}
-		}
-	} catch {
-		// non-fatal fallback
-	}
-	return "\x1b[38;2;25;25;25;48;2;180;180;180m▀\x1b[38;2;10;10;10;48;2;45;45;45m▀\x1b[38;2;25;25;25;48;2;180;180;180m▀\x1b[0m";
-}
-
 export default function (pi: ExtensionAPI) {
 	let config = loadConfig();
 	let current: ChildProcess | null = null;
@@ -264,11 +221,10 @@ export default function (pi: ExtensionAPI) {
 	const refreshTtsStatus = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
 		if (config.enabled) {
-			const vaderIcon = getVaderIcon();
 			ctx.ui.setStatus(
 				"pi-tts",
 				config.vader
-					? `🔊 ${config.voice} ${vaderIcon} vader`
+					? `🔊 ${config.voice} vader`
 					: `🔊 ${config.voice}`,
 			);
 		} else {
