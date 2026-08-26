@@ -67,6 +67,7 @@ def _wait_playing(proc: subprocess.Popen) -> None:
             return
         time.sleep(STOP_POLL_SECONDS)
 
+
 # --- Vader mode -------------------------------------------------------------
 # Voice params the Vader effect assumes; used only when the caller left
 # pitch/rate at the neutral defaults.
@@ -75,6 +76,7 @@ VADER_RATE = os.environ.get("PI_TTS_VADER_RATE", "-30%")
 # The EQ chain cuts ~35 dB out of the speech band, so the make-up gain is large
 # by design — measured output peaks around -9 dBFS, i.e. no clipping.
 VADER_VOLUME = os.environ.get("PI_TTS_VADER_VOLUME", "61.5")
+
 
 # Extra pitch shift in semitones, applied before the EQ. The edge voice reaches
 # ~118 Hz on its own, but the OneCore engine clamps SSML pitch at that same
@@ -179,7 +181,9 @@ def apply_vader(raw_path: str, out_path: str, depth: float = 0.0) -> str:
         if i + 1 < len(attempts):
             # Most likely an ffmpeg build without librubberband — drop the
             # pitch shift rather than losing the whole effect.
-            sys.stderr.write(f"pi-tts: pitch shift unavailable ({last}), using plain Vader\n")
+            sys.stderr.write(
+                f"pi-tts: pitch shift unavailable ({last}), using plain Vader\n"
+            )
         else:
             sys.stderr.write(f"pi-tts: Vader filter failed: {last}\n")
     return raw_path
@@ -221,7 +225,12 @@ def relaxed_ssl_context() -> ssl.SSLContext:
 
 
 async def speak_edge(
-    text: str, voice: str, rate: str, pitch: str, vader: bool = False, depth: float = 0.0
+    text: str,
+    voice: str,
+    rate: str,
+    pitch: str,
+    vader: bool = False,
+    depth: float = 0.0,
 ):
     import edge_tts  # pyright: ignore[reportMissingImports] — runtime dep from requirements.txt
     import edge_tts.communicate as edge_communicate  # pyright: ignore[reportMissingImports]
@@ -230,9 +239,11 @@ async def speak_edge(
     # down an already-finished stream on Windows; it is pure noise.
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(
-        lambda lp, ctx: None
-        if isinstance(ctx.get("exception"), ConnectionResetError)
-        else lp.default_exception_handler(ctx)
+        lambda lp, ctx: (
+            None
+            if isinstance(ctx.get("exception"), ConnectionResetError)
+            else lp.default_exception_handler(ctx)
+        )
     )
 
     tmp_dir = tempfile.mkdtemp(prefix="pitts_")
@@ -250,13 +261,17 @@ async def speak_edge(
             # locally installed interception root — retry once, then give up.
             if not is_cert_error(e):
                 raise
-            sys.stderr.write("pi-tts: TLS interception detected, retrying with system CA store\n")
+            sys.stderr.write(
+                "pi-tts: TLS interception detected, retrying with system CA store\n"
+            )
             edge_communicate._SSL_CTX = relaxed_ssl_context()
             await synth()
         if _stop_requested():
             return
         play_path = (
-            apply_vader(raw_path, os.path.join(tmp_dir, "vader.mp3"), depth) if vader else raw_path
+            apply_vader(raw_path, os.path.join(tmp_dir, "vader.mp3"), depth)
+            if vader
+            else raw_path
         )
         play_file(play_path)
     finally:
@@ -279,7 +294,14 @@ def synth_winrt(text: str, voice: str, rate: str, pitch: str, out_wav: str) -> b
     if platform.system() != "Windows" or not os.path.exists(WINRT_PS1):
         return False
 
-    args = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WINRT_PS1]
+    args = [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        WINRT_PS1,
+    ]
     # An edge-style name (cs-CZ-AntoninNeural) has no WinRT counterpart, but its
     # locale does — match on that instead of the meaningless display name.
     locale = re.match(r"^([a-z]{2}-[A-Za-z]{2})-", voice or "")
@@ -304,7 +326,9 @@ def synth_winrt(text: str, voice: str, rate: str, pitch: str, out_wav: str) -> b
 
     if result.returncode != 0 or not os.path.exists(out_wav):
         detail = result.stderr.decode("utf-8", errors="replace").strip().splitlines()
-        sys.stderr.write(f"pi-tts: WinRT synthesis failed: {detail[-1] if detail else '?'}\n")
+        sys.stderr.write(
+            f"pi-tts: WinRT synthesis failed: {detail[-1] if detail else '?'}\n"
+        )
         return False
     return True
 
@@ -329,9 +353,17 @@ def _hz_of(pitch: str | None) -> float | None:
         return None
 
 
-def synth_espeak(text: str, voice: str | None, rate_pct: int | None, pitch_hz: float | None, out_wav: str) -> bool:
+def synth_espeak(
+    text: str,
+    voice: str | None,
+    rate_pct: int | None,
+    pitch_hz: float | None,
+    out_wav: str,
+) -> bool:
     """Render speech to out_wav via espeak-ng/espeak. Returns False if absent."""
-    binary = "espeak-ng" if have("espeak-ng") else ("espeak" if have("espeak") else None)
+    binary = (
+        "espeak-ng" if have("espeak-ng") else ("espeak" if have("espeak") else None)
+    )
     if not binary:
         return False
     args = [binary]
@@ -354,7 +386,9 @@ def synth_espeak(text: str, voice: str | None, rate_pct: int | None, pitch_hz: f
         os.unlink(txt_path)
     if result.returncode != 0 or not os.path.exists(out_wav):
         detail = result.stderr.decode("utf-8", errors="replace").strip().splitlines()
-        sys.stderr.write(f"pi-tts: espeak synthesis failed: {detail[-1] if detail else '?'}\n")
+        sys.stderr.write(
+            f"pi-tts: espeak synthesis failed: {detail[-1] if detail else '?'}\n"
+        )
         return False
     return True
 
@@ -372,7 +406,9 @@ def stream_spd_say(text: str, rate_pct: int | None) -> bool:
     return True
 
 
-def synth_sapi(text: str, voice: str | None, rate_pct: int | None, out_wav: str) -> bool:
+def synth_sapi(
+    text: str, voice: str | None, rate_pct: int | None, out_wav: str
+) -> bool:
     """Render speech to out_wav via System.Speech (SAPI5). Windows only."""
     txt_path = write_temp_text(text)
     voice_part = f"$s.SelectVoice('{voice}');" if voice else ""
@@ -387,7 +423,9 @@ def synth_sapi(text: str, voice: str | None, rate_pct: int | None, out_wav: str)
     )
     try:
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", ps], capture_output=True, timeout=120
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True,
+            timeout=120,
         )
     finally:
         os.unlink(txt_path)
@@ -414,7 +452,9 @@ def speak_native(
                 ok = synth_winrt(text, voice or "", rate, pitch, wav_path)
             if not ok and api in ("auto", "sapi"):
                 # SAPI5 cannot see OneCore voices, so drop an edge-style name.
-                sapi_voice = voice if voice and not re.match(r"^[a-z]{2}-", voice) else None
+                sapi_voice = (
+                    voice if voice and not re.match(r"^[a-z]{2}-", voice) else None
+                )
                 ok = synth_sapi(text, sapi_voice, rate_pct, wav_path)
             if not ok:
                 sys.stderr.write("pi-tts: native synthesis failed\n")
@@ -447,9 +487,13 @@ def speak_native(
                 play_file(play_path)
             else:
                 if vader:
-                    sys.stderr.write("pi-tts: needs espeak(-ng) for native Vader, speaking plain\n")
+                    sys.stderr.write(
+                        "pi-tts: needs espeak(-ng) for native Vader, speaking plain\n"
+                    )
                 if not stream_spd_say(text, rate_pct):
-                    sys.stderr.write("pi-tts: no native TTS found (need espeak-ng or spd-say)\n")
+                    sys.stderr.write(
+                        "pi-tts: no native TTS found (need espeak-ng or spd-say)\n"
+                    )
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -520,9 +564,13 @@ def main():
             m = re.match(r"([+-]\d+)%", rate)
             if m:
                 rate_pct = max(-10, min(10, int(m.group(1)) // 10))
-            speak_native(text, voice, rate, pitch, rate_pct, vader=args.vader, depth=depth)
+            speak_native(
+                text, voice, rate, pitch, rate_pct, vader=args.vader, depth=depth
+            )
         else:
-            asyncio.run(speak_edge(text, voice, rate, pitch, vader=args.vader, depth=depth))
+            asyncio.run(
+                speak_edge(text, voice, rate, pitch, vader=args.vader, depth=depth)
+            )
     except Exception as e:
         sys.stderr.write(f"pi-tts error: {e}\n")
         sys.exit(1)

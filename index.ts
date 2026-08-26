@@ -34,16 +34,25 @@ const DEFAULTS: TtsConfig = {
 
 const EXT_DIR = dirname(fileURLToPath(import.meta.url));
 const SPEAK_PY = join(EXT_DIR, "speak.py");
+let cachedPython: string | null = null;
 // Windows ships "python"; Linux distros often only have "python3".
-function findPython(): string {
-	if (process.platform === "win32") return "python";
-	for (const candidate of ["python3", "python"]) {
-		const dirs = (process.env.PATH ?? "").split(":");
-		if (dirs.some((d) => existsSync(join(d, candidate)))) return candidate;
+function getPython(): string {
+	if (cachedPython !== null) return cachedPython;
+	if (process.platform === "win32") {
+		cachedPython = "python";
+		return cachedPython;
 	}
-	return "python3";
+	const delimiter = process.platform === "win32" ? ";" : ":";
+	const dirs = (process.env.PATH ?? "").split(delimiter);
+	for (const candidate of ["python3", "python"]) {
+		if (dirs.some((d) => existsSync(join(d, candidate)))) {
+			cachedPython = candidate;
+			return cachedPython;
+		}
+	}
+	cachedPython = "python3";
+	return cachedPython;
 }
-const PYTHON = findPython();
 // Cooperative stop flag, scoped to this pi process (never stale across restarts).
 const STOP_FILE = join(tmpdir(), `pi-tts-stop-${process.pid}`);
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-tts.json");
@@ -158,7 +167,7 @@ export default function (pi: ExtensionAPI) {
 			args.push("--depth", String(config.vaderDepth));
 		}
 
-		const child = spawn(PYTHON, args, {
+		const child = spawn(getPython(), args, {
 			detached: process.platform !== "win32",
 			stdio: ["ignore", "ignore", "pipe"],
 			env: {
@@ -467,17 +476,17 @@ export default function (pi: ExtensionAPI) {
 								"warning",
 							);
 						}
-					} else if (!mode) {
+					} else if (mode) {
+						ctx.ui.notify(
+							`Vader hlas je ${config.vader ? "ZAPNUT" : "VYPNUT"}, hloubka ${config.vaderDepth ?? "auto"}. Použití: /audio vader on|off|depth <půltóny>`,
+							"info",
+						);
+					} else {
 						config.vader = !config.vader;
 						saveConfig(config);
 						refreshTtsStatus(ctx);
 						ctx.ui.notify(
 							`Vader hlas: ${config.vader ? "ZAPNUTO (ON)" : "VYPNUTO (OFF)"}`,
-							"info",
-						);
-					} else {
-						ctx.ui.notify(
-							`Vader hlas je ${config.vader ? "ZAPNUT" : "VYPNUT"}, hloubka ${config.vaderDepth ?? "auto"}. Použití: /audio vader on|off|depth <půltóny>`,
 							"info",
 						);
 					}
