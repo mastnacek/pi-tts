@@ -383,45 +383,90 @@ export default function (pi: ExtensionAPI) {
 
 				if (cmd === "voice") {
 					const items = [
+						// Czech voices (Edge & Native)
 						{
 							value: "voice cs-CZ-AntoninNeural",
 							label: "voice cs-CZ-AntoninNeural",
-							description: "český mužský (Edge)",
+							description: "český mužský Antonín (Edge Cloud)",
 						},
 						{
 							value: "voice cs-CZ-VlastaNeural",
 							label: "voice cs-CZ-VlastaNeural",
-							description: "český ženský (Edge)",
+							description: "český ženský Vlasta (Edge Cloud)",
 						},
+						{
+							value: "voice Microsoft Jakub",
+							label: "voice Microsoft Jakub",
+							description: "český mužský Jakub (Windows offline OneCore)",
+						},
+						{
+							value: "voice cs-CZ",
+							label: "voice cs-CZ",
+							description: "český systémový výchozí (offline)",
+						},
+						{
+							value: "voice cs",
+							label: "voice cs",
+							description: "český offline hlas (Linux espeak-ng)",
+						},
+
+						// Slovak voices (Edge & Native)
 						{
 							value: "voice sk-SK-LukasNeural",
 							label: "voice sk-SK-LukasNeural",
-							description: "slovenský mužský (Edge)",
+							description: "slovenský mužský Lukáš (Edge Cloud)",
 						},
 						{
 							value: "voice sk-SK-ViktoriaNeural",
 							label: "voice sk-SK-ViktoriaNeural",
-							description: "slovenský ženský (Edge)",
+							description: "slovenský ženský Viktória (Edge Cloud)",
 						},
+						{
+							value: "voice Microsoft Laura",
+							label: "voice Microsoft Laura",
+							description: "slovenský ženský Laura (Windows offline OneCore)",
+						},
+						{
+							value: "voice sk-SK",
+							label: "voice sk-SK",
+							description: "slovenský systémový výchozí (offline)",
+						},
+						{
+							value: "voice sk",
+							label: "voice sk",
+							description: "slovenský offline hlas (Linux espeak-ng)",
+						},
+
+						// English & other popular voices
 						{
 							value: "voice en-US-GuyNeural",
 							label: "voice en-US-GuyNeural",
-							description: "anglický mužský (Edge)",
+							description: "anglický mužský Guy (Edge Cloud)",
 						},
 						{
 							value: "voice en-US-JennyNeural",
 							label: "voice en-US-JennyNeural",
-							description: "anglický ženský (Edge)",
+							description: "anglický ženský Jenny (Edge Cloud)",
 						},
 						{
 							value: "voice en-US-AvaNeural",
 							label: "voice en-US-AvaNeural",
-							description: "anglický ženský přirozený (Edge)",
+							description: "anglický ženský Ava (Edge Cloud)",
 						},
 						{
 							value: "voice en-US-EmmaNeural",
 							label: "voice en-US-EmmaNeural",
-							description: "anglický ženský konverzační (Edge)",
+							description: "anglický ženský Emma (Edge Cloud)",
+						},
+						{
+							value: "voice Microsoft Zira",
+							label: "voice Microsoft Zira",
+							description: "anglický ženský Zira (Windows offline)",
+						},
+						{
+							value: "voice Microsoft David",
+							label: "voice Microsoft David",
+							description: "anglický mužský David (Windows offline)",
 						},
 					];
 					const filtered = items.filter((i) =>
