@@ -164,7 +164,7 @@ export default function (pi: ExtensionAPI) {
 			"--pitch",
 			config.pitch,
 			config.vader ? "--vader" : "--no-vader",
-			config.prosody !== false ? "--prosody" : "--no-prosody",
+			config.prosody === false ? "--no-prosody" : "--prosody",
 		];
 		if (config.vader && config.vaderDepth !== null) {
 			args.push("--depth", String(config.vaderDepth));

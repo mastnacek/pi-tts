@@ -251,9 +251,23 @@ def modulate_chunk_prosody(
     return rate, pitch
 
 
+SENTENCE_SPLIT_RE = re.compile(
+    r"(?<="
+    r"(?<!\b(?:např|apod|prof))"
+    r"(?<!\b(?:tzv|atd|doc|mgr|ing|etc|mrs))"
+    r"(?<!\b(?:tj|vs|dr|mr|ms|eg|ie|bc))"
+    r"(?<!\b[a-zA-Z\d]\.[a-zA-Z])"
+    r"(?<!\b[vč\d])"
+    r"[.!?]"
+    r")\s+",
+    re.IGNORECASE,
+)
+
+
 def split_paragraphs_and_sentences(text: str, max_chunk_len: int = 350) -> list[str]:
     """
     Split text into natural chunks (paragraphs/sentences) for pipelined streaming playback.
+    Avoids splitting on common abbreviations (např., tzv., atd., e.g., v1.2, etc.).
     """
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     chunks: list[str] = []
@@ -261,7 +275,7 @@ def split_paragraphs_and_sentences(text: str, max_chunk_len: int = 350) -> list[
         if len(p) <= max_chunk_len:
             chunks.append(p)
         else:
-            sentences = re.split(r"(?<=[.!?])\s+", p)
+            sentences = [s.strip() for s in SENTENCE_SPLIT_RE.split(p) if s.strip()]
             current: list[str] = []
             curr_len = 0
             for s in sentences:
@@ -304,6 +318,7 @@ async def speak_edge(
     tmp_dir = tempfile.mkdtemp(prefix="pitts_")
 
     try:
+
         async def synth_one(chunk_text: str, idx: int) -> str:
             chunk_rate = rate
             chunk_pitch = pitch
