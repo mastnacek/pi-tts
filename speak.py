@@ -211,7 +211,7 @@ def relaxed_ssl_context() -> ssl.SSLContext:
         import certifi
 
         ctx.load_verify_locations(certifi.where())
-    except Exception:
+    except (ImportError, OSError):
         pass
     extra = os.environ.get("PI_TTS_CA_BUNDLE")
     if extra and os.path.exists(extra):
@@ -468,9 +468,9 @@ def main():
     ap.add_argument("--pitch", default=DEFAULT_PITCH)
     ap.add_argument(
         "--vader",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.environ.get("PI_TTS_VADER", "").lower() in ("1", "true", "on"),
-        help="apply the Darth Vader ffmpeg effect",
+        help="apply the Darth Vader ffmpeg effect (--vader / --no-vader)",
     )
     ap.add_argument(
         "--depth",

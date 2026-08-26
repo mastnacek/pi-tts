@@ -152,11 +152,10 @@ export default function (pi: ExtensionAPI) {
 			config.rate,
 			"--pitch",
 			config.pitch,
+			config.vader ? "--vader" : "--no-vader",
 		];
-		if (config.vader) {
-			args.push("--vader");
-			if (config.vaderDepth !== null)
-				args.push("--depth", String(config.vaderDepth));
+		if (config.vader && config.vaderDepth !== null) {
+			args.push("--depth", String(config.vaderDepth));
 		}
 
 		const child = spawn(PYTHON, args, {
@@ -223,9 +222,7 @@ export default function (pi: ExtensionAPI) {
 		if (config.enabled) {
 			ctx.ui.setStatus(
 				"pi-tts",
-				config.vader
-					? `🔊 ${config.voice} vader`
-					: `🔊 ${config.voice}`,
+				config.vader ? `🔊 ${config.voice} vader` : `🔊 ${config.voice}`,
 			);
 		} else {
 			ctx.ui.setStatus("pi-tts", undefined);
@@ -378,8 +375,9 @@ export default function (pi: ExtensionAPI) {
 			return items.length > 0 ? items : null;
 		},
 		handler: async (args, ctx) => {
-			const [sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
-			const value = rest.join(" ");
+			const [subRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+			const sub = (subRaw ?? "").toLowerCase();
+			const value = rest.join(" ").trim();
 
 			switch (sub) {
 				case "on":
@@ -419,13 +417,14 @@ export default function (pi: ExtensionAPI) {
 						ctx.ui.notify(`Aktuální hlas: ${config.voice}`, "info");
 					}
 					break;
-				case "backend":
-					if (value === "edge" || value === "native") {
-						config.backend = value;
+				case "backend": {
+					const valLower = value.toLowerCase();
+					if (valLower === "edge" || valLower === "native") {
+						config.backend = valLower;
 						saveConfig(config);
 						refreshTtsStatus(ctx);
 						ctx.ui.notify(
-							value === "edge"
+							valLower === "edge"
 								? "Backend nastaven na Edge (cloudové neurální hlasy)"
 								: `Backend nastaven na native (offline ${getPlatformLabel()} hlasy)`,
 							"info",
@@ -434,22 +433,28 @@ export default function (pi: ExtensionAPI) {
 						ctx.ui.notify("Použití: /audio backend edge|native", "warning");
 					}
 					break;
+				}
 				case "vader": {
-					const [mode, arg] = value.split(/\s+/);
-					if (mode === "on" || mode === "off") {
-						config.vader = mode === "on";
+					const tokens = value.split(/\s+/).filter(Boolean);
+					const mode = (tokens[0] ?? "").toLowerCase();
+					const arg = (tokens[1] ?? "").toLowerCase();
+
+					if (mode === "on" || mode === "true" || mode === "1") {
+						config.vader = true;
 						saveConfig(config);
 						refreshTtsStatus(ctx);
-						ctx.ui.notify(
-							`Vader hlas: ${mode === "on" ? "ZAPNUTO" : "VYPNUTO"}`,
-							"info",
-						);
+						ctx.ui.notify("Vader hlas: ZAPNUTO (ON)", "info");
+					} else if (mode === "off" || mode === "false" || mode === "0") {
+						config.vader = false;
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify("Vader hlas: VYPNUTO (OFF)", "info");
 					} else if (mode === "depth") {
-						if (arg === "auto") {
+						if (arg === "auto" || !arg) {
 							config.vaderDepth = null;
 							saveConfig(config);
 							ctx.ui.notify("Vader hloubka: auto (0 na edge, -3 na native)", "info");
-						} else if (arg !== undefined && Number.isFinite(Number(arg))) {
+						} else if (Number.isFinite(Number(arg))) {
 							config.vaderDepth = Number(arg);
 							saveConfig(config);
 							ctx.ui.notify(
@@ -462,6 +467,14 @@ export default function (pi: ExtensionAPI) {
 								"warning",
 							);
 						}
+					} else if (!mode) {
+						config.vader = !config.vader;
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify(
+							`Vader hlas: ${config.vader ? "ZAPNUTO (ON)" : "VYPNUTO (OFF)"}`,
+							"info",
+						);
 					} else {
 						ctx.ui.notify(
 							`Vader hlas je ${config.vader ? "ZAPNUT" : "VYPNUT"}, hloubka ${config.vaderDepth ?? "auto"}. Použití: /audio vader on|off|depth <půltóny>`,
