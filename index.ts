@@ -257,26 +257,44 @@ export default function (pi: ExtensionAPI) {
 		getArgumentCompletions: (prefix: string) => {
 			const tokens = prefix.split(/\s+/).filter(Boolean);
 			const trailingSpace = /\s$/.test(prefix);
+			const normalizedPrefix = tokens.join(" ").toLowerCase();
 
-			// Třetí slovo — např. /audio vader depth <auto|-3|-4>
+			// Třetí slovo — např. /audio vader depth <auto|-1|-2|-3|-4>
 			if (tokens.length > 2 || (trailingSpace && tokens.length === 2)) {
 				const cmd = tokens[0]?.toLowerCase();
 				const sub = tokens[1]?.toLowerCase();
-				const arg = (tokens.length > 2 ? tokens[2] : "").toLowerCase();
 
 				if (cmd === "vader" && sub === "depth") {
 					const items = [
 						{
-							value: "auto",
-							label: "auto",
+							value: "vader depth auto",
+							label: "vader depth auto",
 							description: "automatická hloubka (0 na edge, -3 na native)",
 						},
-						{ value: "-1", label: "-1", description: "mírný posun (-1 půltón)" },
-						{ value: "-2", label: "-2", description: "střední posun (-2 půltóny)" },
-						{ value: "-3", label: "-3", description: "klasický Vader (-3 půltóny)" },
-						{ value: "-4", label: "-4", description: "hluboký Vader (-4 půltóny)" },
+						{
+							value: "vader depth -1",
+							label: "vader depth -1",
+							description: "mírný posun (-1 půltón)",
+						},
+						{
+							value: "vader depth -2",
+							label: "vader depth -2",
+							description: "střední posun (-2 půltóny)",
+						},
+						{
+							value: "vader depth -3",
+							label: "vader depth -3",
+							description: "klasický Vader (-3 půltóny)",
+						},
+						{
+							value: "vader depth -4",
+							label: "vader depth -4",
+							description: "hluboký Vader (-4 půltóny)",
+						},
 					];
-					const filtered = items.filter((i) => i.value.startsWith(arg));
+					const filtered = items.filter((i) =>
+						i.value.toLowerCase().startsWith(normalizedPrefix),
+					);
 					return filtered.length > 0 ? filtered : null;
 				}
 				return null;
@@ -285,90 +303,129 @@ export default function (pi: ExtensionAPI) {
 			// Druhé slovo — kontextové dokončování podle podpříkazu
 			if (tokens.length > 1 || (trailingSpace && tokens.length === 1)) {
 				const cmd = tokens[0]?.toLowerCase();
-				const arg = (tokens.length > 1 ? tokens[1] : "").toLowerCase();
 
 				if (cmd === "backend") {
 					const items = [
 						{
-							value: "edge",
+							value: "backend edge",
 							label: "backend edge",
 							description: "Microsoft Edge cloudové neurální hlasy",
 						},
 						{
-							value: "native",
+							value: "backend native",
 							label: "backend native",
 							description: "offline systémové hlasy (Windows WinRT/SAPI5, Linux)",
 						},
 					];
-					const filtered = items.filter((i) => i.value.startsWith(arg));
+					const filtered = items.filter((i) =>
+						i.value.toLowerCase().startsWith(normalizedPrefix),
+					);
 					return filtered.length > 0 ? filtered : null;
 				}
 
 				if (cmd === "vader") {
 					const items = [
-						{ value: "on", label: "vader on", description: "zapnout Vader efekt" },
-						{ value: "off", label: "vader off", description: "vypnout Vader efekt" },
 						{
-							value: "depth",
+							value: "vader on",
+							label: "vader on",
+							description: "zapnout Vader efekt",
+						},
+						{
+							value: "vader off",
+							label: "vader off",
+							description: "vypnout Vader efekt",
+						},
+						{
+							value: "vader depth",
 							label: "vader depth",
 							description: "nastavit hloubku posunu půltónů",
 						},
 					];
-					const filtered = items.filter((i) => i.value.startsWith(arg));
+					const filtered = items.filter((i) =>
+						i.value.toLowerCase().startsWith(normalizedPrefix),
+					);
 					return filtered.length > 0 ? filtered : null;
 				}
 
 				if (cmd === "rate") {
 					const items = [
 						{
-							value: "+0%",
+							value: "rate +0%",
 							label: "rate +0%",
 							description: "výchozí normální rychlost",
 						},
-						{ value: "+10%", label: "rate +10%", description: "+10 % zrychlení" },
-						{ value: "+20%", label: "rate +20%", description: "+20 % zrychlení" },
-						{ value: "-10%", label: "rate -10%", description: "-10 % zpomalení" },
-						{ value: "-20%", label: "rate -20%", description: "-20 % zpomalení" },
+						{
+							value: "rate +10%",
+							label: "rate +10%",
+							description: "+10 % zrychlení",
+						},
+						{
+							value: "rate +20%",
+							label: "rate +20%",
+							description: "+20 % zrychlení",
+						},
+						{
+							value: "rate -10%",
+							label: "rate -10%",
+							description: "-10 % zpomalení",
+						},
+						{
+							value: "rate -20%",
+							label: "rate -20%",
+							description: "-20 % zpomalení",
+						},
 					];
-					const filtered = items.filter((i) => i.value.startsWith(arg));
+					const filtered = items.filter((i) =>
+						i.value.toLowerCase().startsWith(normalizedPrefix),
+					);
 					return filtered.length > 0 ? filtered : null;
 				}
 
 				if (cmd === "voice") {
 					const items = [
 						{
-							value: "cs-CZ-AntoninNeural",
+							value: "voice cs-CZ-AntoninNeural",
 							label: "voice cs-CZ-AntoninNeural",
 							description: "český mužský (Edge)",
 						},
 						{
-							value: "cs-CZ-VlastaNeural",
+							value: "voice cs-CZ-VlastaNeural",
 							label: "voice cs-CZ-VlastaNeural",
 							description: "český ženský (Edge)",
 						},
 						{
-							value: "sk-SK-LukasNeural",
+							value: "voice sk-SK-LukasNeural",
 							label: "voice sk-SK-LukasNeural",
 							description: "slovenský mužský (Edge)",
 						},
 						{
-							value: "sk-SK-ViktoriaNeural",
+							value: "voice sk-SK-ViktoriaNeural",
 							label: "voice sk-SK-ViktoriaNeural",
 							description: "slovenský ženský (Edge)",
 						},
 						{
-							value: "en-US-GuyNeural",
+							value: "voice en-US-GuyNeural",
 							label: "voice en-US-GuyNeural",
 							description: "anglický mužský (Edge)",
 						},
 						{
-							value: "en-US-JennyNeural",
+							value: "voice en-US-JennyNeural",
 							label: "voice en-US-JennyNeural",
 							description: "anglický ženský (Edge)",
 						},
+						{
+							value: "voice en-US-AvaNeural",
+							label: "voice en-US-AvaNeural",
+							description: "anglický ženský přirozený (Edge)",
+						},
+						{
+							value: "voice en-US-EmmaNeural",
+							label: "voice en-US-EmmaNeural",
+							description: "anglický ženský konverzační (Edge)",
+						},
 					];
 					const filtered = items.filter((i) =>
-						i.value.toLowerCase().startsWith(arg),
+						i.value.toLowerCase().startsWith(normalizedPrefix),
 					);
 					return filtered.length > 0 ? filtered : null;
 				}
