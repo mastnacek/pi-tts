@@ -224,6 +224,59 @@ def relaxed_ssl_context() -> ssl.SSLContext:
     return ctx
 
 
+def modulate_chunk_prosody(
+    text: str, base_rate: str, base_pitch: str
+) -> tuple[str, str]:
+    """
+    Apply natural conversational pitch/rate modulation for Edge voices
+    when base rate and pitch are at default values.
+    """
+    rate = base_rate
+    pitch = base_pitch
+    if base_rate in ("+0%", "0%") and base_pitch in ("+0Hz", "0Hz"):
+        stripped = text.strip()
+        # Greetings and confirmations
+        if re.match(
+            r"^(ahoj|čau|dobrý den|zdravím|hello|hi|hey|rozumím|hotovo|jasně|skvěle|perfektní|jistě|sure|done|okay|ok)\b",
+            stripped,
+            re.I,
+        ):
+            rate = "+5%"
+            pitch = "+3Hz"
+        elif stripped.endswith("?"):
+            pitch = "+3Hz"
+        elif stripped.endswith("!"):
+            rate = "+5%"
+            pitch = "+2Hz"
+    return rate, pitch
+
+
+def split_paragraphs_and_sentences(text: str, max_chunk_len: int = 350) -> list[str]:
+    """
+    Split text into natural chunks (paragraphs/sentences) for pipelined streaming playback.
+    """
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    chunks: list[str] = []
+    for p in paragraphs:
+        if len(p) <= max_chunk_len:
+            chunks.append(p)
+        else:
+            sentences = re.split(r"(?<=[.!?])\s+", p)
+            current: list[str] = []
+            curr_len = 0
+            for s in sentences:
+                if curr_len + len(s) > max_chunk_len and current:
+                    chunks.append(" ".join(current))
+                    current = [s]
+                    curr_len = len(s)
+                else:
+                    current.append(s)
+                    curr_len += len(s)
+            if current:
+                chunks.append(" ".join(current))
+    return chunks or [text]
+
+
 async def speak_edge(
     text: str,
     voice: str,
@@ -231,6 +284,7 @@ async def speak_edge(
     pitch: str,
     vader: bool = False,
     depth: float = 0.0,
+    prosody: bool = True,
 ):
     import edge_tts  # pyright: ignore[reportMissingImports] — runtime dep from requirements.txt
     import edge_tts.communicate as edge_communicate  # pyright: ignore[reportMissingImports]
@@ -246,34 +300,57 @@ async def speak_edge(
         )
     )
 
+    chunks = split_paragraphs_and_sentences(text)
     tmp_dir = tempfile.mkdtemp(prefix="pitts_")
-    raw_path = os.path.join(tmp_dir, "raw.mp3")
-
-    async def synth():
-        communicate = edge_tts.Communicate(text, voice, pitch=pitch, rate=rate)
-        await communicate.save(raw_path)
 
     try:
-        try:
-            await synth()
-        except Exception as e:
-            # edge_tts pins its context to certifi only, which cannot see a
-            # locally installed interception root — retry once, then give up.
-            if not is_cert_error(e):
-                raise
-            sys.stderr.write(
-                "pi-tts: TLS interception detected, retrying with system CA store\n"
+        async def synth_one(chunk_text: str, idx: int) -> str:
+            chunk_rate = rate
+            chunk_pitch = pitch
+            if prosody and not vader:
+                chunk_rate, chunk_pitch = modulate_chunk_prosody(
+                    chunk_text, rate, pitch
+                )
+
+            raw_path = os.path.join(tmp_dir, f"chunk_{idx}.mp3")
+            communicate = edge_tts.Communicate(
+                chunk_text, voice, pitch=chunk_pitch, rate=chunk_rate
             )
-            edge_communicate._SSL_CTX = relaxed_ssl_context()
-            await synth()
-        if _stop_requested():
-            return
-        play_path = (
-            apply_vader(raw_path, os.path.join(tmp_dir, "vader.mp3"), depth)
-            if vader
-            else raw_path
-        )
-        play_file(play_path)
+            try:
+                await communicate.save(raw_path)
+            except Exception as e:
+                if is_cert_error(e):
+                    sys.stderr.write(
+                        "pi-tts: TLS interception detected, retrying with system CA store\n"
+                    )
+                    edge_communicate._SSL_CTX = relaxed_ssl_context()
+                    communicate = edge_tts.Communicate(
+                        chunk_text, voice, pitch=chunk_pitch, rate=chunk_rate
+                    )
+                    await communicate.save(raw_path)
+                else:
+                    raise
+
+            if vader:
+                out_vader = os.path.join(tmp_dir, f"vader_{idx}.mp3")
+                return apply_vader(raw_path, out_vader, depth)
+            return raw_path
+
+        # Launch concurrent background synthesis tasks for all chunks
+        synth_tasks = [
+            asyncio.create_task(synth_one(c, i)) for i, c in enumerate(chunks)
+        ]
+
+        # Sequentially stream playback as each chunk finishes synthesis
+        for i, task in enumerate(synth_tasks):
+            if _stop_requested():
+                for pending in synth_tasks[i:]:
+                    pending.cancel()
+                return
+            audio_path = await task
+            if _stop_requested():
+                return
+            play_file(audio_path)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -517,6 +594,12 @@ def main():
         help="apply the Darth Vader ffmpeg effect (--vader / --no-vader)",
     )
     ap.add_argument(
+        "--prosody",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="apply natural conversational prosody modulation for Edge voices",
+    )
+    ap.add_argument(
         "--depth",
         type=float,
         default=None,
@@ -569,7 +652,15 @@ def main():
             )
         else:
             asyncio.run(
-                speak_edge(text, voice, rate, pitch, vader=args.vader, depth=depth)
+                speak_edge(
+                    text,
+                    voice,
+                    rate,
+                    pitch,
+                    vader=args.vader,
+                    depth=depth,
+                    prosody=args.prosody,
+                )
             )
     except Exception as e:
         sys.stderr.write(f"pi-tts error: {e}\n")

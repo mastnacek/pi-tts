@@ -18,6 +18,7 @@ interface TtsConfig {
 	vader: boolean;
 	/** Extra Vader pitch shift in semitones; null = per-backend default. */
 	vaderDepth: number | null;
+	prosody: boolean;
 	maxLen: number;
 }
 
@@ -29,6 +30,7 @@ const DEFAULTS: TtsConfig = {
 	pitch: process.env.PI_TTS_PITCH ?? "+0Hz",
 	vader: false,
 	vaderDepth: null,
+	prosody: true,
 	maxLen: 1500,
 };
 
@@ -162,6 +164,7 @@ export default function (pi: ExtensionAPI) {
 			"--pitch",
 			config.pitch,
 			config.vader ? "--vader" : "--no-vader",
+			config.prosody !== false ? "--prosody" : "--no-prosody",
 		];
 		if (config.vader && config.vaderDepth !== null) {
 			args.push("--depth", String(config.vaderDepth));
@@ -246,6 +249,7 @@ export default function (pi: ExtensionAPI) {
 		voice: "nastaví hlas pro syntézu řeči",
 		backend: "výběr enginu: edge (cloud) nebo native (offline)",
 		vader: "Darth Vader efekt (on | off | depth <půltóny>)",
+		prosody: "přirozená modulace intonace a tempa u Edge hlasů (on/off)",
 		rate: "rychlost řeči (např. +10%, -15%)",
 		say: "okamžitě přečte zadaný text",
 		help: "zobrazí podrobnou nápovědu",
@@ -303,6 +307,25 @@ export default function (pi: ExtensionAPI) {
 			// Druhé slovo — kontextové dokončování podle podpříkazu
 			if (tokens.length > 1 || (trailingSpace && tokens.length === 1)) {
 				const cmd = tokens[0]?.toLowerCase();
+
+				if (cmd === "prosody") {
+					const items = [
+						{
+							value: "prosody on",
+							label: "prosody on",
+							description: "zapnout konverzační modulaci intonace a tempa",
+						},
+						{
+							value: "prosody off",
+							label: "prosody off",
+							description: "vypnout modulaci (monotónní tempo)",
+						},
+					];
+					const filtered = items.filter((i) =>
+						i.value.toLowerCase().startsWith(normalizedPrefix),
+					);
+					return filtered.length > 0 ? filtered : null;
+				}
 
 				if (cmd === "backend") {
 					const items = [
@@ -528,6 +551,30 @@ export default function (pi: ExtensionAPI) {
 						ctx.ui.notify(`Aktuální hlas: ${config.voice}`, "info");
 					}
 					break;
+				case "prosody": {
+					const valLower = value.toLowerCase();
+					if (valLower === "on" || valLower === "true" || valLower === "1") {
+						config.prosody = true;
+						saveConfig(config);
+						ctx.ui.notify("Konverzační prosodie: ZAPNUTO (ON)", "info");
+					} else if (
+						valLower === "off" ||
+						valLower === "false" ||
+						valLower === "0"
+					) {
+						config.prosody = false;
+						saveConfig(config);
+						ctx.ui.notify("Konverzační prosodie: VYPNUTO (OFF)", "info");
+					} else {
+						config.prosody = !config.prosody;
+						saveConfig(config);
+						ctx.ui.notify(
+							`Konverzační prosodie: ${config.prosody ? "ZAPNUTO (ON)" : "VYPNUTO (OFF)"}`,
+							"info",
+						);
+					}
+					break;
+				}
 				case "backend": {
 					const valLower = value.toLowerCase();
 					if (valLower === "edge" || valLower === "native") {
