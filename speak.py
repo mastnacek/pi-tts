@@ -77,6 +77,7 @@ VADER_RATE = os.environ.get("PI_TTS_VADER_RATE", "-30%")
 # by design — measured output peaks around -9 dBFS, i.e. no clipping.
 VADER_VOLUME = os.environ.get("PI_TTS_VADER_VOLUME", "61.5")
 VADER2_VOLUME = os.environ.get("PI_TTS_VADER2_VOLUME", "2.4")
+C3PO_VOLUME = os.environ.get("PI_TTS_C3PO_VOLUME", "2.2")
 
 
 # Extra pitch shift in semitones, applied before the EQ. The edge voice reaches
@@ -149,6 +150,26 @@ VADER2_FILTER_FALLBACK = (
     "volume={volume}"
 )
 
+# C-3PO: Bandpass (220-5500Hz) + +5dB Peak @ 1.6kHz + Haas 10ms Double Tracking + Flanger & Reverb Ambiance
+C3PO_FILTER_COMPLEX = (
+    "[0:a]highpass=f=220,lowpass=f=5500,equalizer=f=1600:t=q:w=1.8:g=5,"
+    "flanger=delay=8.0:depth=3.5:regen=30:width=65:speed=0.6:shape=sinusoidal:phase=75,"
+    "asplit=2[dry][wet_delay];"
+    "[wet_delay]adelay=10|10[del];"
+    "[dry][del]amix=inputs=2:weights=1.0 1.0:normalize=0[doubled];"
+    "[doubled]acompressor=threshold=0.12:ratio=4.0:attack=10:release=100:makeup=4.0,"
+    "aecho=0.8:0.25:35:0.22,aecho=0.8:0.18:70:0.15,"
+    "volume={volume}"
+)
+
+C3PO_FILTER_FALLBACK = (
+    "highpass=f=220,lowpass=f=5500,equalizer=f=1600:t=q:w=1.8:g=5,"
+    "flanger=delay=8.0:depth=3.5:regen=30:width=65:speed=0.6:shape=sinusoidal:phase=75,"
+    "acompressor=threshold=0.12:ratio=4.0:attack=10:release=100:makeup=4.0,"
+    "aecho=0.8:0.25:35:0.22,aecho=0.8:0.18:70:0.15,"
+    "volume={volume}"
+)
+
 
 def clean_markdown(text: str) -> str:
     """Strip markdown syntax for cleaner TTS output."""
@@ -214,6 +235,38 @@ def apply_vader(
     """Run the Vader filter chain over raw_path; return the file to play."""
     if not have("ffmpeg"):
         sys.stderr.write("pi-tts: ffmpeg not found, playing without Vader effect\n")
+        return raw_path
+
+    if profile == "c3po":
+        # Profile 3: C-3PO Droid Effect (Bandpass + 1.6kHz Peak + Haas Double Tracking + Flanger & Reverb)
+        complex_chain = C3PO_FILTER_COMPLEX.format(volume=C3PO_VOLUME)
+        res = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                raw_path,
+                "-filter_complex",
+                complex_chain,
+                out_path,
+            ],
+            capture_output=True,
+            timeout=90,
+        )
+        if res.returncode == 0:
+            return out_path
+        fallback_chain = C3PO_FILTER_FALLBACK.format(volume=C3PO_VOLUME)
+        res_fb = subprocess.run(
+            ["ffmpeg", "-y", "-i", raw_path, "-af", fallback_chain, out_path],
+            capture_output=True,
+            timeout=90,
+        )
+        if res_fb.returncode == 0:
+            return out_path
+        detail = res_fb.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        sys.stderr.write(
+            f"pi-tts: C-3PO filter failed: {detail[-1] if detail else '?'}\n"
+        )
         return raw_path
 
     if profile == "vader2":
@@ -736,10 +789,15 @@ def main():
         help="shortcut for --vader --vader-profile vader2",
     )
     ap.add_argument(
+        "--c3po",
+        action="store_true",
+        help="shortcut for --vader --vader-profile c3po",
+    )
+    ap.add_argument(
         "--vader-profile",
-        choices=["classic", "vader2"],
+        choices=["classic", "vader2", "c3po"],
         default=os.environ.get("PI_TTS_VADER_PROFILE", "classic"),
-        help="vader effect profile: classic or vader2 (sub-octave + robotic tremolo)",
+        help="DSP effect profile: classic, vader2 (sub-octave), or c3po (droid)",
     )
     ap.add_argument(
         "--prosody",
@@ -782,6 +840,9 @@ def main():
     if args.vader2:
         args.vader = True
         args.vader_profile = "vader2"
+    elif args.c3po:
+        args.vader = True
+        args.vader_profile = "c3po"
 
     rate, pitch = args.rate, args.pitch
     if args.vader:

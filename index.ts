@@ -16,7 +16,7 @@ interface TtsConfig {
 	rate: string;
 	pitch: string;
 	vader: boolean;
-	vaderProfile: "classic" | "vader2";
+	vaderProfile: "classic" | "vader2" | "c3po";
 	/** Extra Vader pitch shift in semitones; null = per-backend default. */
 	vaderDepth: number | null;
 	prosody: boolean;
@@ -31,7 +31,8 @@ const DEFAULTS: TtsConfig = {
 	pitch: process.env.PI_TTS_PITCH ?? "+0Hz",
 	vader: false,
 	vaderProfile:
-		(process.env.PI_TTS_VADER_PROFILE as "classic" | "vader2") ?? "classic",
+		(process.env.PI_TTS_VADER_PROFILE as "classic" | "vader2" | "c3po") ??
+		"classic",
 	vaderDepth: null,
 	prosody: true,
 	maxLen: 1500,
@@ -244,7 +245,12 @@ export default function (pi: ExtensionAPI) {
 	const refreshTtsStatus = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
 		if (config.enabled) {
-			const vTag = config.vaderProfile === "vader2" ? "vader2" : "vader";
+			let vTag = "vader";
+			if (config.vaderProfile === "c3po") {
+				vTag = "c3po";
+			} else if (config.vaderProfile === "vader2") {
+				vTag = "vader2";
+			}
 			ctx.ui.setStatus(
 				"pi-tts",
 				config.vader ? `🔊 ${config.voice} ${vTag}` : `🔊 ${config.voice}`,
@@ -261,8 +267,11 @@ export default function (pi: ExtensionAPI) {
 		status: "zobrazí aktuální stav TTS, hlas a případné chyby",
 		voice: "nastaví hlas pro syntézu řeči",
 		backend: "výběr enginu: edge (cloud) nebo native (offline)",
-		vader: "Darth Vader efekt (on | off | classic | vader2 | depth <půltóny>)",
-		vader2: "rychlé zapnutí Vader2 (temná sub-oktáva + robotický tremolo flanger)",
+		vader:
+			"Darth Vader / DSP efekt (on | off | classic | vader2 | c3po | depth <půltóny>)",
+		vader2:
+			"rychlé zapnutí Vader2 (temná sub-oktáva + robotický tremolo flanger)",
+		c3po: "rychlé zapnutí C-3PO droid efektu (Haas delay + pásmový filtr + flanger)",
 		prosody: "přirozená modulace intonace a tempa u Edge hlasů (on/off)",
 		rate: "rychlost řeči (např. +10%, -15%)",
 		say: "okamžitě přečte zadaný text",
@@ -380,7 +389,14 @@ export default function (pi: ExtensionAPI) {
 						{
 							value: "vader vader2",
 							label: "vader vader2",
-							description: "Vader2 profil (temná sub-oktáva + robotický tremolo flanger)",
+							description:
+								"Vader2 profil (temná sub-oktáva + robotický tremolo flanger)",
+						},
+						{
+							value: "vader c3po",
+							label: "vader c3po",
+							description:
+								"C-3PO droid profil (Haas 10ms delay + 1.6kHz peak + flanger)",
 						},
 						{
 							value: "vader depth",
@@ -405,6 +421,25 @@ export default function (pi: ExtensionAPI) {
 							value: "vader2 off",
 							label: "vader2 off",
 							description: "vypnout Vader efekt",
+						},
+					];
+					const filtered = items.filter((i) =>
+						i.value.toLowerCase().startsWith(normalizedPrefix),
+					);
+					return filtered.length > 0 ? filtered : null;
+				}
+
+				if (cmd === "c3po") {
+					const items = [
+						{
+							value: "c3po on",
+							label: "c3po on",
+							description: "zapnout C-3PO droid režim",
+						},
+						{
+							value: "c3po off",
+							label: "c3po off",
+							description: "vypnout C-3PO efekt",
 						},
 					];
 					const filtered = items.filter((i) =>
@@ -576,7 +611,7 @@ export default function (pi: ExtensionAPI) {
 					break;
 				case "status":
 					ctx.ui.notify(
-						`TTS ${config.enabled ? "ON" : "OFF"} | backend=${config.backend} voice=${config.voice} rate=${config.rate} vader=${config.vader ? config.vaderProfile ?? "classic" : "off"} depth=${config.vaderDepth ?? "auto"}` +
+						`TTS ${config.enabled ? "ON" : "OFF"} | backend=${config.backend} voice=${config.voice} rate=${config.rate} vader=${config.vader ? (config.vaderProfile ?? "classic") : "off"} depth=${config.vaderDepth ?? "auto"}` +
 							(lastSpokenAt
 								? ` | naposledy mluvil ${new Date(lastSpokenAt).toLocaleTimeString()}`
 								: "") +
@@ -635,6 +670,25 @@ export default function (pi: ExtensionAPI) {
 					}
 					break;
 				}
+				case "c3po": {
+					const valLower = value.toLowerCase();
+					if (valLower === "off" || valLower === "false" || valLower === "0") {
+						config.vader = false;
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify("C-3PO hlas: VYPNUTO (OFF)", "info");
+					} else {
+						config.vader = true;
+						config.vaderProfile = "c3po";
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify(
+							"C-3PO droid režim: ZAPNUTO (ON) — Haas 10ms delay + 1.6kHz peak + flanger",
+							"info",
+						);
+					}
+					break;
+				}
 				case "vader2": {
 					const valLower = value.toLowerCase();
 					if (valLower === "off" || valLower === "false" || valLower === "0") {
@@ -672,6 +726,15 @@ export default function (pi: ExtensionAPI) {
 						saveConfig(config);
 						refreshTtsStatus(ctx);
 						ctx.ui.notify("Vader hlas: VYPNUTO (OFF)", "info");
+					} else if (mode === "c3po" || mode === "3") {
+						config.vader = true;
+						config.vaderProfile = "c3po";
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify(
+							"Vader profil: C-3PO (Haas delay + 1.6kHz peak + flanger)",
+							"info",
+						);
 					} else if (mode === "vader2" || mode === "2") {
 						config.vader = true;
 						config.vaderProfile = "vader2";
@@ -681,11 +744,7 @@ export default function (pi: ExtensionAPI) {
 							"Vader profil: VADER2 (temná sub-oktáva + robotický tremolo flanger)",
 							"info",
 						);
-					} else if (
-						mode === "classic" ||
-						mode === "vader1" ||
-						mode === "default"
-					) {
+					} else if (mode === "classic" || mode === "vader1" || mode === "default") {
 						config.vader = true;
 						config.vaderProfile = "classic";
 						saveConfig(config);

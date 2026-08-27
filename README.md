@@ -31,15 +31,16 @@ pi install git:github.com/mastnacek/pi-tts
 ## /audio commands
 
 | Command | Effect |
-|---|---|
+| --- | --- |
 | `/audio on` / `off` | Enable/disable speaking (persisted) |
 | `/audio stop` | Stop current playback |
 | `/audio status` | State, backend, voice, rate, vader, last error |
 | `/audio voice <name>` | Set voice (e.g. `cs-CZ-AntoninNeural`); no arg shows current |
 | `/audio backend edge\|native` | Cloud neural vs offline engine |
 | `/audio vader on\|off` | Toggle the Vader effect |
-| `/audio vader classic\|vader2` | Switch between Classic and Vader2 (sub-octave + robotic tremolo) profiles |
+| `/audio vader classic\|vader2\|c3po` | Switch between Classic, Vader2, and C-3PO profiles |
 | `/audio vader2 on\|off` | Quick shortcut to enable/disable Vader2 mode |
+| `/audio c3po on\|off` | Quick shortcut to enable/disable C-3PO droid mode |
 | `/audio vader depth <semitones>` | Extra pitch shift; negative = deeper; `auto` = 0 on edge, −3 on native |
 | `/audio rate ±N%` | Speech rate (e.g. `+10%`, `-10%`) |
 | `/audio say <text>` | Speak text immediately |
@@ -50,7 +51,7 @@ A new user prompt interrupts playback. Config persists in
 ## Environment variables
 
 | Variable | Default | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `PI_TTS_VOICE` | `cs-CZ-AntoninNeural` | Default voice |
 | `PI_TTS_RATE` | `+0%` | Default rate |
 | `PI_TTS_PITCH` | `+0Hz` | Default pitch |
@@ -61,7 +62,8 @@ A new user prompt interrupts playback. Config persists in
 | `PI_TTS_VADER_PITCH` | `-30Hz` | Vader base pitch |
 | `PI_TTS_VADER_RATE` | `-30%` | Vader base rate |
 | `PI_TTS_VADER_VOLUME` | `61.5` | Classic Vader make-up gain |
-| `PI_TTS_VADER2_VOLUME` | `2.2` | Vader2 make-up gain |
+| `PI_TTS_VADER2_VOLUME` | `2.4` | Vader2 make-up gain |
+| `PI_TTS_C3PO_VOLUME` | `2.2` | C-3PO make-up gain |
 | `PI_TTS_VADER_DEPTH` | `0` edge / `-3` native | Extra semitone shift |
 | `PI_TTS_NATIVE_API` | `auto` | `winrt` / `sapi` / `auto` |
 | `PI_TTS_CA_BUNDLE` | — | Extra CA bundle for TLS-intercepting antivirus proxies |
