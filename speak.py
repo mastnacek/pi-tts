@@ -77,6 +77,7 @@ VADER_RATE = os.environ.get("PI_TTS_VADER_RATE", "-30%")
 # by design — measured output peaks around -9 dBFS, i.e. no clipping.
 VADER_VOLUME = os.environ.get("PI_TTS_VADER_VOLUME", "61.5")
 VADER2_VOLUME = os.environ.get("PI_TTS_VADER2_VOLUME", "2.4")
+VADER3_VOLUME = os.environ.get("PI_TTS_VADER3_VOLUME", "4.8")
 C3PO_VOLUME = os.environ.get("PI_TTS_C3PO_VOLUME", "2.2")
 
 
@@ -147,6 +148,40 @@ VADER2_FILTER_FALLBACK = (
     "aecho=0.8:0.7:12:0.32,"
     "aecho=0.8:0.85:90:0.12,"
     "lowpass=f=7500,"
+    "volume={volume}"
+)
+
+# Vader 3: Ben Burtt Organic Vocal Saturation + Micro-Pitch Doubling (No Comb Flanging)
+VADER3_FILTER_COMPLEX = (
+    "[0:a]equalizer=f=65:t=q:w=1.0:g=9,"
+    "equalizer=f=110:t=q:w=0.9:g=5,"
+    "equalizer=f=420:t=q:w=1.4:g=-14,"
+    "equalizer=f=950:t=q:w=1.2:g=-10,"
+    "equalizer=f=2600:t=q:w=2.0:g=7,"
+    "equalizer=f=5200:t=q:w=1.5:g=4,asplit=2[main][sub_detune];"
+    "[sub_detune]rubberband=pitch=0.995394:formant=shifted,volume=0.30[detuned];"
+    "[main]volume=1.0[lead];"
+    "[lead][detuned]amix=inputs=2:weights=1.0 0.30:normalize=0[thickened];"
+    "[thickened]volume=2.2,"
+    "asoftclip=type=atan:threshold=0.55:param=2.0,"
+    "acompressor=threshold=0.15:ratio=3.5:attack=15:release=120:makeup=4.2,"
+    "aecho=0.8:0.12:12:0.22,aecho=0.8:0.08:38:0.10,"
+    "lowpass=f=7000,"
+    "volume={volume}"
+)
+
+VADER3_FILTER_FALLBACK = (
+    "equalizer=f=65:t=q:w=1.0:g=9,"
+    "equalizer=f=110:t=q:w=0.9:g=5,"
+    "equalizer=f=420:t=q:w=1.4:g=-14,"
+    "equalizer=f=950:t=q:w=1.2:g=-10,"
+    "equalizer=f=2600:t=q:w=2.0:g=7,"
+    "equalizer=f=5200:t=q:w=1.5:g=4,"
+    "volume=2.2,"
+    "asoftclip=type=atan:threshold=0.55:param=2.0,"
+    "acompressor=threshold=0.15:ratio=3.5:attack=15:release=120:makeup=4.2,"
+    "aecho=0.8:0.12:12:0.22,aecho=0.8:0.08:38:0.10,"
+    "lowpass=f=7000,"
     "volume={volume}"
 )
 
@@ -269,8 +304,8 @@ def apply_vader(
         )
         return raw_path
 
-    if profile == "vader2":
-        # Profile 2: Dark Sub-Octave + 75 Hz Robotic Tremolo + Resonant Helmet Flanger
+    if profile in ("vader2", "vader3"):
+        # Profile: Vader 2 / Vader 3 (Dark Sub-Octave + 75 Hz Robotic Tremolo + Resonant Helmet Flanger + High-End Clarity)
         complex_chain = VADER2_FILTER_COMPLEX.format(volume=VADER2_VOLUME)
         res = subprocess.run(
             [
@@ -303,7 +338,7 @@ def apply_vader(
             return out_path
         detail = res_fb.stderr.decode("utf-8", errors="replace").strip().splitlines()
         sys.stderr.write(
-            f"pi-tts: Vader2 filter failed: {detail[-1] if detail else '?'}\n"
+            f"pi-tts: {profile} filter failed: {detail[-1] if detail else '?'}\n"
         )
         return raw_path
 
@@ -789,15 +824,20 @@ def main():
         help="shortcut for --vader --vader-profile vader2",
     )
     ap.add_argument(
+        "--vader3",
+        action="store_true",
+        help="shortcut for --vader --vader-profile vader3",
+    )
+    ap.add_argument(
         "--c3po",
         action="store_true",
         help="shortcut for --vader --vader-profile c3po",
     )
     ap.add_argument(
         "--vader-profile",
-        choices=["classic", "vader2", "c3po"],
+        choices=["classic", "vader2", "vader3", "c3po"],
         default=os.environ.get("PI_TTS_VADER_PROFILE", "classic"),
-        help="DSP effect profile: classic, vader2 (sub-octave), or c3po (droid)",
+        help="DSP effect profile: classic, vader2, vader3 (micro-pitch), or c3po (droid)",
     )
     ap.add_argument(
         "--prosody",
@@ -840,6 +880,9 @@ def main():
     if args.vader2:
         args.vader = True
         args.vader_profile = "vader2"
+    elif args.vader3:
+        args.vader = True
+        args.vader_profile = "vader3"
     elif args.c3po:
         args.vader = True
         args.vader_profile = "c3po"

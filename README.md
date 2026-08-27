@@ -38,8 +38,9 @@ pi install git:github.com/mastnacek/pi-tts
 | `/audio voice <name>` | Set voice (e.g. `cs-CZ-AntoninNeural`); no arg shows current |
 | `/audio backend edge\|native` | Cloud neural vs offline engine |
 | `/audio vader on\|off` | Toggle the Vader effect |
-| `/audio vader classic\|vader2\|c3po` | Switch between Classic, Vader2, and C-3PO profiles |
+| `/audio vader classic\|vader2\|vader3\|c3po` | Switch between Classic, Vader2, Vader3, and C-3PO profiles |
 | `/audio vader2 on\|off` | Quick shortcut to enable/disable Vader2 mode |
+| `/audio vader3 on\|off` | Quick shortcut to enable/disable Vader3 mode |
 | `/audio c3po on\|off` | Quick shortcut to enable/disable C-3PO droid mode |
 | `/audio vader depth <semitones>` | Extra pitch shift; negative = deeper; `auto` = 0 on edge, −3 on native |
 | `/audio rate ±N%` | Speech rate (e.g. `+10%`, `-10%`) |
@@ -58,7 +59,7 @@ A new user prompt interrupts playback. Config persists in
 | `PI_TTS_MAXLEN` | `1500` | Max characters spoken |
 | `PI_TTS_BACKEND` | `edge` | Default backend |
 | `PI_TTS_VADER` | off | Start with Vader on |
-| `PI_TTS_VADER_PROFILE` | `classic` | Vader profile (`classic` or `vader2`) |
+| `PI_TTS_VADER_PROFILE` | `classic` | Vader profile (`classic`, `vader2`, `vader3`, `c3po`) |
 | `PI_TTS_VADER_PITCH` | `-30Hz` | Vader base pitch |
 | `PI_TTS_VADER_RATE` | `-30%` | Vader base rate |
 | `PI_TTS_VADER_VOLUME` | `61.5` | Classic Vader make-up gain |

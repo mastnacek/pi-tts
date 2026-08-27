@@ -16,7 +16,7 @@ interface TtsConfig {
 	rate: string;
 	pitch: string;
 	vader: boolean;
-	vaderProfile: "classic" | "vader2" | "c3po";
+	vaderProfile: "classic" | "vader2" | "vader3" | "c3po";
 	/** Extra Vader pitch shift in semitones; null = per-backend default. */
 	vaderDepth: number | null;
 	prosody: boolean;
@@ -31,8 +31,11 @@ const DEFAULTS: TtsConfig = {
 	pitch: process.env.PI_TTS_PITCH ?? "+0Hz",
 	vader: false,
 	vaderProfile:
-		(process.env.PI_TTS_VADER_PROFILE as "classic" | "vader2" | "c3po") ??
-		"classic",
+		(process.env.PI_TTS_VADER_PROFILE as
+			| "classic"
+			| "vader2"
+			| "vader3"
+			| "c3po") ?? "classic",
 	vaderDepth: null,
 	prosody: true,
 	maxLen: 1500,
@@ -250,6 +253,8 @@ export default function (pi: ExtensionAPI) {
 				vTag = "c3po";
 			} else if (config.vaderProfile === "vader2") {
 				vTag = "vader2";
+			} else if (config.vaderProfile === "vader3") {
+				vTag = "vader3";
 			}
 			ctx.ui.setStatus(
 				"pi-tts",
@@ -268,9 +273,11 @@ export default function (pi: ExtensionAPI) {
 		voice: "nastaví hlas pro syntézu řeči",
 		backend: "výběr enginu: edge (cloud) nebo native (offline)",
 		vader:
-			"Darth Vader / DSP efekt (on | off | classic | vader2 | c3po | depth <půltóny>)",
+			"Darth Vader / DSP efekt (on | off | classic | vader2 | vader3 | c3po | depth <půltóny>)",
 		vader2:
 			"rychlé zapnutí Vader2 (temná sub-oktáva + robotický tremolo flanger)",
+		vader3:
+			"rychlé zapnutí Vader3 (vader2 profil)",
 		c3po: "rychlé zapnutí C-3PO droid efektu (Haas delay + pásmový filtr + flanger)",
 		prosody: "přirozená modulace intonace a tempa u Edge hlasů (on/off)",
 		rate: "rychlost řeči (např. +10%, -15%)",
@@ -393,6 +400,12 @@ export default function (pi: ExtensionAPI) {
 								"Vader2 profil (temná sub-oktáva + robotický tremolo flanger)",
 						},
 						{
+							value: "vader vader3",
+							label: "vader vader3",
+							description:
+								"Vader3 profil (vader2 sub-oktáva + robotický flanger)",
+						},
+						{
 							value: "vader c3po",
 							label: "vader c3po",
 							description:
@@ -420,6 +433,25 @@ export default function (pi: ExtensionAPI) {
 						{
 							value: "vader2 off",
 							label: "vader2 off",
+							description: "vypnout Vader efekt",
+						},
+					];
+					const filtered = items.filter((i) =>
+						i.value.toLowerCase().startsWith(normalizedPrefix),
+					);
+					return filtered.length > 0 ? filtered : null;
+				}
+
+				if (cmd === "vader3") {
+					const items = [
+						{
+							value: "vader3 on",
+							label: "vader3 on",
+							description: "zapnout Vader3 (vader2 profil)",
+						},
+						{
+							value: "vader3 off",
+							label: "vader3 off",
 							description: "vypnout Vader efekt",
 						},
 					];
@@ -708,6 +740,25 @@ export default function (pi: ExtensionAPI) {
 					}
 					break;
 				}
+				case "vader3": {
+					const valLower = value.toLowerCase();
+					if (valLower === "off" || valLower === "false" || valLower === "0") {
+						config.vader = false;
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify("Vader hlas: VYPNUTO (OFF)", "info");
+					} else {
+						config.vader = true;
+						config.vaderProfile = "vader3";
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify(
+							"Vader3 režim: ZAPNUTO (ON) [profil: vader2]",
+							"info",
+						);
+					}
+					break;
+				}
 				case "vader": {
 					const tokens = value.split(/\s+/).filter(Boolean);
 					const mode = (tokens[0] ?? "").toLowerCase();
@@ -742,6 +793,15 @@ export default function (pi: ExtensionAPI) {
 						refreshTtsStatus(ctx);
 						ctx.ui.notify(
 							"Vader profil: VADER2 (temná sub-oktáva + robotický tremolo flanger)",
+							"info",
+						);
+					} else if (mode === "vader3" || mode === "3") {
+						config.vader = true;
+						config.vaderProfile = "vader3";
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify(
+							"Vader profil: VADER3 [profil: vader2]",
 							"info",
 						);
 					} else if (mode === "classic" || mode === "vader1" || mode === "default") {
