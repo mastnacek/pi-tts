@@ -76,7 +76,7 @@ VADER_RATE = os.environ.get("PI_TTS_VADER_RATE", "-30%")
 # The EQ chain cuts ~35 dB out of the speech band, so the make-up gain is large
 # by design — measured output peaks around -9 dBFS, i.e. no clipping.
 VADER_VOLUME = os.environ.get("PI_TTS_VADER_VOLUME", "61.5")
-VADER2_VOLUME = os.environ.get("PI_TTS_VADER2_VOLUME", "2.2")
+VADER2_VOLUME = os.environ.get("PI_TTS_VADER2_VOLUME", "2.4")
 
 
 # Extra pitch shift in semitones, applied before the EQ. The edge voice reaches
@@ -110,36 +110,42 @@ VADER_FILTER = (
     "volume={volume}"
 )
 
-# Vader 2: Dark Sub-Octave + Robotic Tremolo + Resonant Helmet Flanger
+# Vader 2: Dark Sub-Octave + Robotic Tremolo + Resonant Helmet Flanger + High-End Clarity
 VADER2_FILTER_COMPLEX = (
     "[0:a]asplit=2[lead][sub];"
-    "[sub]rubberband=pitch=0.5:formant=shifted,equalizer=f=70:t=q:w=1.5:g=14,lowpass=f=550,volume=1.5[sub_low];"
+    "[sub]rubberband=pitch=0.5:formant=shifted,equalizer=f=80:t=q:w=1.2:g=5,lowpass=f=400,volume=0.85[sub_low];"
     "[lead]volume=1.0[lead_main];"
-    "[lead_main][sub_low]amix=inputs=2:weights=1.0 0.9:dropout_transition=0[mixed];"
-    "[mixed]volume=2.2,"
-    "asoftclip=type=atan:threshold=0.45:param=2.8,"
-    "equalizer=f=60:t=q:w=1.2:g=8,"
-    "equalizer=f=450:t=q:w=1.5:g=-14,"
-    "equalizer=f=2800:t=q:w=2.8:g=9,"
-    "tremolo=f=75:d=0.35,"
-    "flanger=delay=6.0:depth=6.5:regen=55:width=90:speed=0.55:shape=sinusoidal:phase=75,"
-    "aecho=0.8:0.7:12:0.35,"
+    "[lead_main][sub_low]amix=inputs=2:weights=1.0 0.45:dropout_transition=0[mixed];"
+    "[mixed]volume=2.0,"
+    "asoftclip=type=atan:threshold=0.5:param=2.5,"
+    "equalizer=f=60:t=q:w=1.2:g=3,"
+    "equalizer=f=120:t=q:w=1.0:g=2,"
+    "equalizer=f=450:t=q:w=1.5:g=-12,"
+    "equalizer=f=2800:t=q:w=2.5:g=8,"
+    "equalizer=f=4500:t=q:w=1.8:g=6,"
+    "equalizer=f=6800:t=q:w=1.5:g=5,"
+    "tremolo=f=75:d=0.32,"
+    "flanger=delay=5.5:depth=5.5:regen=48:width=85:speed=0.5:shape=sinusoidal:phase=75,"
+    "aecho=0.8:0.7:12:0.32,"
     "aecho=0.8:0.85:90:0.12,"
-    "lowpass=f=5500,"
+    "lowpass=f=7500,"
     "volume={volume}"
 )
 
 VADER2_FILTER_FALLBACK = (
-    "volume=2.2,"
-    "asoftclip=type=atan:threshold=0.45:param=2.8,"
-    "equalizer=f=60:t=q:w=1.2:g=8,"
-    "equalizer=f=450:t=q:w=1.5:g=-14,"
-    "equalizer=f=2800:t=q:w=2.8:g=9,"
-    "tremolo=f=75:d=0.35,"
-    "flanger=delay=6.0:depth=6.5:regen=55:width=90:speed=0.55:shape=sinusoidal:phase=75,"
-    "aecho=0.8:0.7:12:0.35,"
+    "volume=2.0,"
+    "asoftclip=type=atan:threshold=0.5:param=2.5,"
+    "equalizer=f=60:t=q:w=1.2:g=3,"
+    "equalizer=f=120:t=q:w=1.0:g=2,"
+    "equalizer=f=450:t=q:w=1.5:g=-12,"
+    "equalizer=f=2800:t=q:w=2.5:g=8,"
+    "equalizer=f=4500:t=q:w=1.8:g=6,"
+    "equalizer=f=6800:t=q:w=1.5:g=5,"
+    "tremolo=f=75:d=0.32,"
+    "flanger=delay=5.5:depth=5.5:regen=48:width=85:speed=0.5:shape=sinusoidal:phase=75,"
+    "aecho=0.8:0.7:12:0.32,"
     "aecho=0.8:0.85:90:0.12,"
-    "lowpass=f=5500,"
+    "lowpass=f=7500,"
     "volume={volume}"
 )
 
