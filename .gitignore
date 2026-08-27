@@ -1,5 +1,10 @@
 __pycache__/
+*.pyc
 .ruff_cache/
+node_modules/
 nul
 *.log
+*.wav
+*.mp3
 .DS_Store
+

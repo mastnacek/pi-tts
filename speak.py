@@ -112,17 +112,26 @@ VADER_FILTER = (
 
 def clean_markdown(text: str) -> str:
     """Strip markdown syntax for cleaner TTS output."""
+    # Strip unprintable control characters
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     text = re.sub(r"```[\s\S]*?```", " code omitted. ", text)
-    text = re.sub(r"`[^`]+`", "", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
     text = re.sub(r"#{1,6}\s*", "", text)
     text = re.sub(r"\*{1,2}([^*]+)\*{1,2}", r"\1", text)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
     text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.M)
-    text = re.sub(r"\|[^|]*\|", "", text)
-    text = re.sub(r"\n{2,}", ". ", text)
-    text = re.sub(r"\n", " ", text)
-    text = re.sub(r"\s{2,}", " ", text)
-    return text.strip()
+    # Strip markdown table rows
+    text = re.sub(r"^\s*\|.*\|\s*$", "", text, flags=re.M)
+    text = re.sub(r"^\s*[-:| ]{3,}\s*$", "", text, flags=re.M)
+    # Normalize paragraphs
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
+    cleaned_paragraphs = []
+    for p in paragraphs:
+        cleaned = re.sub(r"\s*\n\s*", " ", p)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+        if cleaned:
+            cleaned_paragraphs.append(cleaned)
+    return "\n\n".join(cleaned_paragraphs)
 
 
 def have(cmd: str) -> bool:
@@ -136,20 +145,23 @@ def play_file(path: str):
             ["ffplay", "-autoexit", "-nodisp", "-loglevel", "quiet", path]
         )
     elif platform.system() == "Windows":
+        ps_path = path.replace("'", "''")
         ps = (
             "Add-Type -AssemblyName presentationCore;"
             "$p = New-Object System.Windows.Media.MediaPlayer;"
-            f"$p.Open([uri]'{path}'); $p.Play(); Start-Sleep 1;"
+            f"$p.Open([uri]'{ps_path}'); $p.Play(); Start-Sleep 1;"
             "while ($p.NaturalDuration.HasTimeSpan -eq $false) { Start-Sleep -Milliseconds 200 };"
             "Start-Sleep $p.NaturalDuration.TimeSpan.TotalSeconds; $p.Close()"
         )
         proc = subprocess.Popen(["powershell", "-NoProfile", "-Command", ps])
+    elif platform.system() == "Darwin" and have("afplay"):
+        proc = subprocess.Popen(["afplay", path])
+    elif path.endswith(".wav") and have("aplay"):
+        proc = subprocess.Popen(["aplay", "-q", path])
     elif have("mpg123"):
         proc = subprocess.Popen(["mpg123", "-q", path])
-    elif have("aplay") and path.endswith(".wav"):
-        proc = subprocess.Popen(["aplay", "-q", path])
     else:
-        sys.stderr.write("pi-tts: no audio player found (need ffplay/mpg123)\n")
+        sys.stderr.write("pi-tts: no audio player found (need ffplay/mpg123/aplay/afplay)\n")
         return
     _wait_playing(proc)
 
@@ -234,7 +246,7 @@ def modulate_chunk_prosody(
     rate = base_rate
     pitch = base_pitch
     if base_rate in ("+0%", "0%") and base_pitch in ("+0Hz", "0Hz"):
-        stripped = text.strip()
+        stripped = text.strip().rstrip("\"'“”»)]}")
         # Greetings and confirmations
         if re.match(
             r"^(ahoj|čau|dobrý den|zdravím|hello|hi|hey|rozumím|hotovo|jasně|skvěle|perfektní|jistě|sure|done|okay|ok)\b",
@@ -257,7 +269,8 @@ SENTENCE_SPLIT_RE = re.compile(
     r"(?<!\b(?:tzv|atd|doc|mgr|ing|etc|mrs))"
     r"(?<!\b(?:tj|vs|dr|mr|ms|eg|ie|bc))"
     r"(?<!\b[a-zA-Z\d]\.[a-zA-Z])"
-    r"(?<!\b[vč\d])"
+    r"(?<!\b[vč])"
+    r"(?<!\d)"
     r"[.!?]"
     r")\s+",
     re.IGNORECASE,
@@ -365,7 +378,7 @@ async def speak_edge(
             audio_path = await task
             if _stop_requested():
                 return
-            play_file(audio_path)
+            await asyncio.to_thread(play_file, audio_path)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -428,13 +441,18 @@ def synth_winrt(text: str, voice: str, rate: str, pitch: str, out_wav: str) -> b
 def _locale_of(voice: str | None) -> str | None:
     """Extract an espeak-style language tag from a voice name.
 
-    Edge-style names carry the locale: cs-CZ-AntoninNeural -> cs,
-    en-GB-RyanNeural -> en-gb. Plain names are returned as-is.
+    Edge-style names carry the locale: cs-CZ-AntoninNeural -> cs-cz,
+    en-GB-RyanNeural -> en-gb. Plain locale codes (cs, en-US) are kept.
+    Windows OneCore display names (Microsoft Jakub) are ignored.
     """
     if not voice:
         return None
     m = re.match(r"^([a-z]{2}(?:-[A-Za-z]{2})?)-", voice)
-    return m.group(1).lower() if m else voice.lower()
+    if m:
+        return m.group(1).lower()
+    if re.match(r"^[a-z]{2}(?:-[a-zA-Z]{2})?$", voice):
+        return voice.lower()
+    return None
 
 
 def _hz_of(pitch: str | None) -> float | None:
@@ -473,7 +491,7 @@ def synth_espeak(
     args += ["-w", out_wav]
     txt_path = write_temp_text(text)
     try:
-        result = subprocess.run(args + [txt_path], capture_output=True, timeout=120)
+        result = subprocess.run(args + ["-f", txt_path], capture_output=True, timeout=120)
     finally:
         os.unlink(txt_path)
     if result.returncode != 0 or not os.path.exists(out_wav):
@@ -485,11 +503,14 @@ def synth_espeak(
     return True
 
 
-def stream_spd_say(text: str, rate_pct: int | None) -> bool:
+def stream_spd_say(text: str, voice: str | None, rate_pct: int | None) -> bool:
     """Stream directly through speech-dispatcher. Last-resort Linux path."""
     if not have("spd-say"):
         return False
     args = ["spd-say", "-e"]
+    locale = _locale_of(voice)
+    if locale:
+        args += ["-l", locale.split("-")[0]]
     if rate_pct is not None:
         args += ["-r", str(rate_pct * 10)]  # spd-say uses -100..100
     args.append(text)
@@ -503,14 +524,17 @@ def synth_sapi(
 ) -> bool:
     """Render speech to out_wav via System.Speech (SAPI5). Windows only."""
     txt_path = write_temp_text(text)
-    voice_part = f"$s.SelectVoice('{voice}');" if voice else ""
+    ps_txt_path = txt_path.replace("'", "''")
+    ps_out_wav = out_wav.replace("'", "''")
+    voice_escaped = voice.replace("'", "''") if voice else ""
+    voice_part = f"try {{ $s.SelectVoice('{voice_escaped}') }} catch {{}};" if voice else ""
     rate_part = f"$s.Rate = {rate_pct};" if rate_pct is not None else ""
     ps = (
         "Add-Type -AssemblyName System.Speech;"
         "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
-        f"$s.SetOutputToWaveFile('{out_wav}');"
+        f"$s.SetOutputToWaveFile('{ps_out_wav}');"
         f"{voice_part}{rate_part}"
-        f"$t = [IO.File]::ReadAllText('{txt_path}', [Text.Encoding]::UTF8);"
+        f"$t = [IO.File]::ReadAllText('{ps_txt_path}', [Text.Encoding]::UTF8);"
         "$s.Speak($t); $s.Dispose()"
     )
     try:
@@ -582,7 +606,7 @@ def speak_native(
                     sys.stderr.write(
                         "pi-tts: needs espeak(-ng) for native Vader, speaking plain\n"
                     )
-                if not stream_spd_say(text, rate_pct):
+                if not stream_spd_say(text, voice, rate_pct):
                     sys.stderr.write(
                         "pi-tts: no native TTS found (need espeak-ng or spd-say)\n"
                     )
@@ -637,7 +661,12 @@ def main():
     if not text:
         return
     if len(text) > MAX_TEXT_LENGTH:
-        text = text[:MAX_TEXT_LENGTH] + "..."
+        truncated = text[:MAX_TEXT_LENGTH]
+        last_space = truncated.rfind(" ")
+        if last_space > (MAX_TEXT_LENGTH * 4) // 5:
+            text = truncated[:last_space] + "..."
+        else:
+            text = truncated + "..."
 
     voice = args.voice or DEFAULT_VOICE
 

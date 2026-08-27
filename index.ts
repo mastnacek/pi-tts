@@ -82,8 +82,10 @@ function saveConfig(cfg: TtsConfig) {
 /** Extract plain text from an assistant message. */
 function extractText(message: any): string {
 	if (!message || message.role !== "assistant") return "";
+	if (typeof message.content === "string") return message.content;
+	if (!Array.isArray(message.content)) return "";
 	const parts: string[] = [];
-	for (const block of message.content ?? []) {
+	for (const block of message.content) {
 		if (typeof block === "string") parts.push(block);
 		else if (block?.type === "text" && typeof block.text === "string")
 			parts.push(block.text);

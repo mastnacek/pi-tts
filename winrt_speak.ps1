@@ -9,8 +9,8 @@
     WinRT projection this relies on.
 #>
 param(
-    [Parameter(Mandatory = $true)][string]$TextFile,
-    [Parameter(Mandatory = $true)][string]$Out,
+    [string]$TextFile = "",
+    [string]$Out = "",
     [string]$Voice = "",
     [string]$Language = "",
     [string]$Rate = "",
@@ -42,6 +42,11 @@ if ($ListVoices) {
     exit 0
 }
 
+if (-not $TextFile -or -not $Out) {
+    Write-Error "TextFile and Out parameters are required when not listing voices."
+    exit 1
+}
+
 # Voice pick: explicit name, then exact locale, then language family.
 $sel = $null
 if ($Voice) { $sel = $voices | Where-Object { $_.DisplayName -like "*$Voice*" } | Select-Object -First 1 }
@@ -57,7 +62,9 @@ $synth = New-Object Windows.Media.SpeechSynthesis.SpeechSynthesizer
 if ($sel) { $synth.Voice = $sel }
 $lang = if ($sel) { $sel.Language } else { "en-US" }
 
-$text = [IO.File]::ReadAllText($TextFile, [Text.Encoding]::UTF8)
+$rawText = [IO.File]::ReadAllText($TextFile, [Text.Encoding]::UTF8)
+# Strip XML-incompatible control characters (ASCII 0x00-0x08, 0x0B-0x0C, 0x0E-0x1F)
+$text = [regex]::Replace($rawText, "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "")
 
 try {
     if ($Rate -or $Pitch) {
