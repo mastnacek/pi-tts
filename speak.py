@@ -161,7 +161,9 @@ def play_file(path: str):
     elif have("mpg123"):
         proc = subprocess.Popen(["mpg123", "-q", path])
     else:
-        sys.stderr.write("pi-tts: no audio player found (need ffplay/mpg123/aplay/afplay)\n")
+        sys.stderr.write(
+            "pi-tts: no audio player found (need ffplay/mpg123/aplay/afplay)\n"
+        )
         return
     _wait_playing(proc)
 
@@ -491,7 +493,9 @@ def synth_espeak(
     args += ["-w", out_wav]
     txt_path = write_temp_text(text)
     try:
-        result = subprocess.run(args + ["-f", txt_path], capture_output=True, timeout=120)
+        result = subprocess.run(
+            args + ["-f", txt_path], capture_output=True, timeout=120
+        )
     finally:
         os.unlink(txt_path)
     if result.returncode != 0 or not os.path.exists(out_wav):
@@ -527,7 +531,9 @@ def synth_sapi(
     ps_txt_path = txt_path.replace("'", "''")
     ps_out_wav = out_wav.replace("'", "''")
     voice_escaped = voice.replace("'", "''") if voice else ""
-    voice_part = f"try {{ $s.SelectVoice('{voice_escaped}') }} catch {{}};" if voice else ""
+    voice_part = (
+        f"try {{ $s.SelectVoice('{voice_escaped}') }} catch {{}};" if voice else ""
+    )
     rate_part = f"$s.Rate = {rate_pct};" if rate_pct is not None else ""
     ps = (
         "Add-Type -AssemblyName System.Speech;"
