@@ -76,6 +76,7 @@ VADER_RATE = os.environ.get("PI_TTS_VADER_RATE", "-30%")
 # The EQ chain cuts ~35 dB out of the speech band, so the make-up gain is large
 # by design — measured output peaks around -9 dBFS, i.e. no clipping.
 VADER_VOLUME = os.environ.get("PI_TTS_VADER_VOLUME", "61.5")
+VADER2_VOLUME = os.environ.get("PI_TTS_VADER2_VOLUME", "2.2")
 
 
 # Extra pitch shift in semitones, applied before the EQ. The edge voice reaches
@@ -106,6 +107,39 @@ VADER_FILTER = (
     "aecho=0.8:0.88:5:0.61,"
     "aecho=0.8:0.88:105:0.13,"
     "aecho=0.6:0.6:180:0.08,"
+    "volume={volume}"
+)
+
+# Vader 2: Dark Sub-Octave + Robotic Tremolo + Resonant Helmet Flanger
+VADER2_FILTER_COMPLEX = (
+    "[0:a]asplit=2[lead][sub];"
+    "[sub]rubberband=pitch=0.5:formant=shifted,equalizer=f=70:t=q:w=1.5:g=14,lowpass=f=550,volume=1.5[sub_low];"
+    "[lead]volume=1.0[lead_main];"
+    "[lead_main][sub_low]amix=inputs=2:weights=1.0 0.9:dropout_transition=0[mixed];"
+    "[mixed]volume=2.2,"
+    "asoftclip=type=atan:threshold=0.45:param=2.8,"
+    "equalizer=f=60:t=q:w=1.2:g=8,"
+    "equalizer=f=450:t=q:w=1.5:g=-14,"
+    "equalizer=f=2800:t=q:w=2.8:g=9,"
+    "tremolo=f=75:d=0.35,"
+    "flanger=delay=6.0:depth=6.5:regen=55:width=90:speed=0.55:shape=sinusoidal:phase=75,"
+    "aecho=0.8:0.7:12:0.35,"
+    "aecho=0.8:0.85:90:0.12,"
+    "lowpass=f=5500,"
+    "volume={volume}"
+)
+
+VADER2_FILTER_FALLBACK = (
+    "volume=2.2,"
+    "asoftclip=type=atan:threshold=0.45:param=2.8,"
+    "equalizer=f=60:t=q:w=1.2:g=8,"
+    "equalizer=f=450:t=q:w=1.5:g=-14,"
+    "equalizer=f=2800:t=q:w=2.8:g=9,"
+    "tremolo=f=75:d=0.35,"
+    "flanger=delay=6.0:depth=6.5:regen=55:width=90:speed=0.55:shape=sinusoidal:phase=75,"
+    "aecho=0.8:0.7:12:0.35,"
+    "aecho=0.8:0.85:90:0.12,"
+    "lowpass=f=5500,"
     "volume={volume}"
 )
 
@@ -168,10 +202,50 @@ def play_file(path: str):
     _wait_playing(proc)
 
 
-def apply_vader(raw_path: str, out_path: str, depth: float = 0.0) -> str:
+def apply_vader(
+    raw_path: str, out_path: str, depth: float = 0.0, profile: str = "classic"
+) -> str:
     """Run the Vader filter chain over raw_path; return the file to play."""
     if not have("ffmpeg"):
         sys.stderr.write("pi-tts: ffmpeg not found, playing without Vader effect\n")
+        return raw_path
+
+    if profile == "vader2":
+        # Profile 2: Dark Sub-Octave + 75 Hz Robotic Tremolo + Resonant Helmet Flanger
+        complex_chain = VADER2_FILTER_COMPLEX.format(volume=VADER2_VOLUME)
+        res = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                raw_path,
+                "-filter_complex",
+                complex_chain,
+                out_path,
+            ],
+            capture_output=True,
+            timeout=90,
+        )
+        if res.returncode == 0:
+            return out_path
+        # Fallback if filter_complex fails (e.g. no librubberband for pitch=0.5)
+        fallback_chain = VADER2_FILTER_FALLBACK.format(volume=VADER2_VOLUME)
+        if depth:
+            ratio = 2 ** (depth / 12)
+            fallback_chain = (
+                f"rubberband=pitch={ratio:.6f}:formant=shifted," + fallback_chain
+            )
+        res_fb = subprocess.run(
+            ["ffmpeg", "-y", "-i", raw_path, "-af", fallback_chain, out_path],
+            capture_output=True,
+            timeout=90,
+        )
+        if res_fb.returncode == 0:
+            return out_path
+        detail = res_fb.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        sys.stderr.write(
+            f"pi-tts: Vader2 filter failed: {detail[-1] if detail else '?'}\n"
+        )
         return raw_path
 
     chain = VADER_FILTER.format(volume=VADER_VOLUME)
@@ -312,6 +386,7 @@ async def speak_edge(
     rate: str,
     pitch: str,
     vader: bool = False,
+    vader_profile: str = "classic",
     depth: float = 0.0,
     prosody: bool = True,
 ):
@@ -363,7 +438,7 @@ async def speak_edge(
 
             if vader:
                 out_vader = os.path.join(tmp_dir, f"vader_{idx}.mp3")
-                return apply_vader(raw_path, out_vader, depth)
+                return apply_vader(raw_path, out_vader, depth, profile=vader_profile)
             return raw_path
 
         # Launch concurrent background synthesis tasks for all chunks
@@ -561,6 +636,7 @@ def speak_native(
     pitch: str,
     rate_pct: int | None,
     vader: bool = False,
+    vader_profile: str = "classic",
     depth: float = 0.0,
 ):
     system = platform.system()
@@ -584,7 +660,12 @@ def speak_native(
             if _stop_requested():
                 return
             play_path = (
-                apply_vader(wav_path, os.path.join(tmp_dir, "vader.mp3"), depth)
+                apply_vader(
+                    wav_path,
+                    os.path.join(tmp_dir, "vader.mp3"),
+                    depth,
+                    profile=vader_profile,
+                )
                 if vader
                 else wav_path
             )
@@ -602,7 +683,12 @@ def speak_native(
                 if _stop_requested():
                     return
                 play_path = (
-                    apply_vader(wav_path, os.path.join(tmp_dir, "vader.mp3"), depth)
+                    apply_vader(
+                        wav_path,
+                        os.path.join(tmp_dir, "vader.mp3"),
+                        depth,
+                        profile=vader_profile,
+                    )
                     if vader
                     else wav_path
                 )
@@ -637,6 +723,17 @@ def main():
         action=argparse.BooleanOptionalAction,
         default=os.environ.get("PI_TTS_VADER", "").lower() in ("1", "true", "on"),
         help="apply the Darth Vader ffmpeg effect (--vader / --no-vader)",
+    )
+    ap.add_argument(
+        "--vader2",
+        action="store_true",
+        help="shortcut for --vader --vader-profile vader2",
+    )
+    ap.add_argument(
+        "--vader-profile",
+        choices=["classic", "vader2"],
+        default=os.environ.get("PI_TTS_VADER_PROFILE", "classic"),
+        help="vader effect profile: classic or vader2 (sub-octave + robotic tremolo)",
     )
     ap.add_argument(
         "--prosody",
@@ -676,6 +773,10 @@ def main():
 
     voice = args.voice or DEFAULT_VOICE
 
+    if args.vader2:
+        args.vader = True
+        args.vader_profile = "vader2"
+
     rate, pitch = args.rate, args.pitch
     if args.vader:
         # The effect is tuned for a slow, low delivery — supply it unless the
@@ -698,7 +799,14 @@ def main():
             if m:
                 rate_pct = max(-10, min(10, int(m.group(1)) // 10))
             speak_native(
-                text, voice, rate, pitch, rate_pct, vader=args.vader, depth=depth
+                text,
+                voice,
+                rate,
+                pitch,
+                rate_pct,
+                vader=args.vader,
+                vader_profile=args.vader_profile,
+                depth=depth,
             )
         else:
             asyncio.run(
@@ -708,6 +816,7 @@ def main():
                     rate,
                     pitch,
                     vader=args.vader,
+                    vader_profile=args.vader_profile,
                     depth=depth,
                     prosody=args.prosody,
                 )

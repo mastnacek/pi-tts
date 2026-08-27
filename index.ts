@@ -16,6 +16,7 @@ interface TtsConfig {
 	rate: string;
 	pitch: string;
 	vader: boolean;
+	vaderProfile: "classic" | "vader2";
 	/** Extra Vader pitch shift in semitones; null = per-backend default. */
 	vaderDepth: number | null;
 	prosody: boolean;
@@ -29,6 +30,8 @@ const DEFAULTS: TtsConfig = {
 	rate: process.env.PI_TTS_RATE ?? "+0%",
 	pitch: process.env.PI_TTS_PITCH ?? "+0Hz",
 	vader: false,
+	vaderProfile:
+		(process.env.PI_TTS_VADER_PROFILE as "classic" | "vader2") ?? "classic",
 	vaderDepth: null,
 	prosody: true,
 	maxLen: 1500,
@@ -62,7 +65,12 @@ const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-tts.json");
 function loadConfig(): TtsConfig {
 	try {
 		if (existsSync(CONFIG_PATH)) {
-			return { ...DEFAULTS, ...JSON.parse(readFileSync(CONFIG_PATH, "utf-8")) };
+			const parsed = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+			return {
+				...DEFAULTS,
+				...parsed,
+				vaderProfile: parsed.vaderProfile ?? "classic",
+			};
 		}
 	} catch {
 		// corrupted config -> defaults
@@ -166,6 +174,8 @@ export default function (pi: ExtensionAPI) {
 			"--pitch",
 			config.pitch,
 			config.vader ? "--vader" : "--no-vader",
+			"--vader-profile",
+			config.vaderProfile ?? "classic",
 			config.prosody === false ? "--no-prosody" : "--prosody",
 		];
 		if (config.vader && config.vaderDepth !== null) {
@@ -234,9 +244,10 @@ export default function (pi: ExtensionAPI) {
 	const refreshTtsStatus = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
 		if (config.enabled) {
+			const vTag = config.vaderProfile === "vader2" ? "vader2" : "vader";
 			ctx.ui.setStatus(
 				"pi-tts",
-				config.vader ? `🔊 ${config.voice} vader` : `🔊 ${config.voice}`,
+				config.vader ? `🔊 ${config.voice} ${vTag}` : `🔊 ${config.voice}`,
 			);
 		} else {
 			ctx.ui.setStatus("pi-tts", undefined);
@@ -250,7 +261,8 @@ export default function (pi: ExtensionAPI) {
 		status: "zobrazí aktuální stav TTS, hlas a případné chyby",
 		voice: "nastaví hlas pro syntézu řeči",
 		backend: "výběr enginu: edge (cloud) nebo native (offline)",
-		vader: "Darth Vader efekt (on | off | depth <půltóny>)",
+		vader: "Darth Vader efekt (on | off | classic | vader2 | depth <půltóny>)",
+		vader2: "rychlé zapnutí Vader2 (temná sub-oktáva + robotický tremolo flanger)",
 		prosody: "přirozená modulace intonace a tempa u Edge hlasů (on/off)",
 		rate: "rychlost řeči (např. +10%, -15%)",
 		say: "okamžitě přečte zadaný text",
@@ -361,9 +373,38 @@ export default function (pi: ExtensionAPI) {
 							description: "vypnout Vader efekt",
 						},
 						{
+							value: "vader classic",
+							label: "vader classic",
+							description: "klasický Darth Vader profil (EQ + echo + flanger)",
+						},
+						{
+							value: "vader vader2",
+							label: "vader vader2",
+							description: "Vader2 profil (temná sub-oktáva + robotický tremolo flanger)",
+						},
+						{
 							value: "vader depth",
 							label: "vader depth",
 							description: "nastavit hloubku posunu půltónů",
+						},
+					];
+					const filtered = items.filter((i) =>
+						i.value.toLowerCase().startsWith(normalizedPrefix),
+					);
+					return filtered.length > 0 ? filtered : null;
+				}
+
+				if (cmd === "vader2") {
+					const items = [
+						{
+							value: "vader2 on",
+							label: "vader2 on",
+							description: "zapnout Vader2 (sub-oktáva + robotické tremolo)",
+						},
+						{
+							value: "vader2 off",
+							label: "vader2 off",
+							description: "vypnout Vader efekt",
 						},
 					];
 					const filtered = items.filter((i) =>
@@ -535,7 +576,7 @@ export default function (pi: ExtensionAPI) {
 					break;
 				case "status":
 					ctx.ui.notify(
-						`TTS ${config.enabled ? "ON" : "OFF"} | backend=${config.backend} voice=${config.voice} rate=${config.rate} vader=${config.vader ? "on" : "off"} depth=${config.vaderDepth ?? "auto"}` +
+						`TTS ${config.enabled ? "ON" : "OFF"} | backend=${config.backend} voice=${config.voice} rate=${config.rate} vader=${config.vader ? config.vaderProfile ?? "classic" : "off"} depth=${config.vaderDepth ?? "auto"}` +
 							(lastSpokenAt
 								? ` | naposledy mluvil ${new Date(lastSpokenAt).toLocaleTimeString()}`
 								: "") +
@@ -594,6 +635,25 @@ export default function (pi: ExtensionAPI) {
 					}
 					break;
 				}
+				case "vader2": {
+					const valLower = value.toLowerCase();
+					if (valLower === "off" || valLower === "false" || valLower === "0") {
+						config.vader = false;
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify("Vader hlas: VYPNUTO (OFF)", "info");
+					} else {
+						config.vader = true;
+						config.vaderProfile = "vader2";
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify(
+							"Vader2 režim: ZAPNUTO (ON) — temná sub-oktáva + robotický tremolo flanger",
+							"info",
+						);
+					}
+					break;
+				}
 				case "vader": {
 					const tokens = value.split(/\s+/).filter(Boolean);
 					const mode = (tokens[0] ?? "").toLowerCase();
@@ -603,12 +663,34 @@ export default function (pi: ExtensionAPI) {
 						config.vader = true;
 						saveConfig(config);
 						refreshTtsStatus(ctx);
-						ctx.ui.notify("Vader hlas: ZAPNUTO (ON)", "info");
+						ctx.ui.notify(
+							`Vader hlas: ZAPNUTO (ON) [profil: ${config.vaderProfile ?? "classic"}]`,
+							"info",
+						);
 					} else if (mode === "off" || mode === "false" || mode === "0") {
 						config.vader = false;
 						saveConfig(config);
 						refreshTtsStatus(ctx);
 						ctx.ui.notify("Vader hlas: VYPNUTO (OFF)", "info");
+					} else if (mode === "vader2" || mode === "2") {
+						config.vader = true;
+						config.vaderProfile = "vader2";
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify(
+							"Vader profil: VADER2 (temná sub-oktáva + robotický tremolo flanger)",
+							"info",
+						);
+					} else if (
+						mode === "classic" ||
+						mode === "vader1" ||
+						mode === "default"
+					) {
+						config.vader = true;
+						config.vaderProfile = "classic";
+						saveConfig(config);
+						refreshTtsStatus(ctx);
+						ctx.ui.notify("Vader profil: CLASSIC (původní Darth Vader)", "info");
 					} else if (mode === "depth") {
 						if (arg === "auto" || !arg) {
 							config.vaderDepth = null;
@@ -629,7 +711,7 @@ export default function (pi: ExtensionAPI) {
 						}
 					} else if (mode) {
 						ctx.ui.notify(
-							`Vader hlas je ${config.vader ? "ZAPNUT" : "VYPNUT"}, hloubka ${config.vaderDepth ?? "auto"}. Použití: /audio vader on|off|depth <půltóny>`,
+							`Vader hlas je ${config.vader ? "ZAPNUT" : "VYPNUT"} (profil: ${config.vaderProfile ?? "classic"}, hloubka: ${config.vaderDepth ?? "auto"}). Použití: /audio vader on|off|classic|vader2|depth <půltóny>`,
 							"info",
 						);
 					} else {
@@ -637,7 +719,7 @@ export default function (pi: ExtensionAPI) {
 						saveConfig(config);
 						refreshTtsStatus(ctx);
 						ctx.ui.notify(
-							`Vader hlas: ${config.vader ? "ZAPNUTO (ON)" : "VYPNUTO (OFF)"}`,
+							`Vader hlas: ${config.vader ? `ZAPNUTO (ON) [${config.vaderProfile ?? "classic"}]` : "VYPNUTO (OFF)"}`,
 							"info",
 						);
 					}

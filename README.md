@@ -38,6 +38,8 @@ pi install git:github.com/mastnacek/pi-tts
 | `/audio voice <name>` | Set voice (e.g. `cs-CZ-AntoninNeural`); no arg shows current |
 | `/audio backend edge\|native` | Cloud neural vs offline engine |
 | `/audio vader on\|off` | Toggle the Vader effect |
+| `/audio vader classic\|vader2` | Switch between Classic and Vader2 (sub-octave + robotic tremolo) profiles |
+| `/audio vader2 on\|off` | Quick shortcut to enable/disable Vader2 mode |
 | `/audio vader depth <semitones>` | Extra pitch shift; negative = deeper; `auto` = 0 on edge, −3 on native |
 | `/audio rate ±N%` | Speech rate (e.g. `+10%`, `-10%`) |
 | `/audio say <text>` | Speak text immediately |
@@ -55,9 +57,11 @@ A new user prompt interrupts playback. Config persists in
 | `PI_TTS_MAXLEN` | `1500` | Max characters spoken |
 | `PI_TTS_BACKEND` | `edge` | Default backend |
 | `PI_TTS_VADER` | off | Start with Vader on |
+| `PI_TTS_VADER_PROFILE` | `classic` | Vader profile (`classic` or `vader2`) |
 | `PI_TTS_VADER_PITCH` | `-30Hz` | Vader base pitch |
 | `PI_TTS_VADER_RATE` | `-30%` | Vader base rate |
-| `PI_TTS_VADER_VOLUME` | `61.5` | Vader make-up gain (EQ cuts ~35 dB) |
+| `PI_TTS_VADER_VOLUME` | `61.5` | Classic Vader make-up gain |
+| `PI_TTS_VADER2_VOLUME` | `2.2` | Vader2 make-up gain |
 | `PI_TTS_VADER_DEPTH` | `0` edge / `-3` native | Extra semitone shift |
 | `PI_TTS_NATIVE_API` | `auto` | `winrt` / `sapi` / `auto` |
 | `PI_TTS_CA_BUNDLE` | — | Extra CA bundle for TLS-intercepting antivirus proxies |
