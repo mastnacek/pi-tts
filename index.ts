@@ -276,9 +276,9 @@ export default function (pi: ExtensionAPI) {
 			"Darth Vader / DSP efekt (on | off | classic | vader2 | vader3 | c3po | depth <půltóny>)",
 		vader2:
 			"rychlé zapnutí Vader2 (temná sub-oktáva + robotický tremolo flanger)",
-		vader3:
-			"rychlé zapnutí Vader3 (vader2 profil)",
-		c3po: "rychlé zapnutí C-3PO droid efektu (Haas delay + pásmový filtr + flanger)",
+		vader3: "rychlé zapnutí Vader3 (vader2 profil)",
+		c3po:
+			"rychlé zapnutí C-3PO droid efektu (Haas delay + pásmový filtr + flanger)",
 		prosody: "přirozená modulace intonace a tempa u Edge hlasů (on/off)",
 		rate: "rychlost řeči (např. +10%, -15%)",
 		say: "okamžitě přečte zadaný text",
@@ -402,8 +402,7 @@ export default function (pi: ExtensionAPI) {
 						{
 							value: "vader vader3",
 							label: "vader vader3",
-							description:
-								"Vader3 profil (vader2 sub-oktáva + robotický flanger)",
+							description: "Vader3 profil (vader2 sub-oktáva + robotický flanger)",
 						},
 						{
 							value: "vader c3po",
@@ -752,10 +751,7 @@ export default function (pi: ExtensionAPI) {
 						config.vaderProfile = "vader3";
 						saveConfig(config);
 						refreshTtsStatus(ctx);
-						ctx.ui.notify(
-							"Vader3 režim: ZAPNUTO (ON) [profil: vader2]",
-							"info",
-						);
+						ctx.ui.notify("Vader3 režim: ZAPNUTO (ON) [profil: vader2]", "info");
 					}
 					break;
 				}
@@ -800,10 +796,7 @@ export default function (pi: ExtensionAPI) {
 						config.vaderProfile = "vader3";
 						saveConfig(config);
 						refreshTtsStatus(ctx);
-						ctx.ui.notify(
-							"Vader profil: VADER3 [profil: vader2]",
-							"info",
-						);
+						ctx.ui.notify("Vader profil: VADER3 [profil: vader2]", "info");
 					} else if (mode === "classic" || mode === "vader1" || mode === "default") {
 						config.vader = true;
 						config.vaderProfile = "classic";
