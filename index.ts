@@ -113,6 +113,14 @@ function getPlatformLabel(): string {
 }
 
 export default function (pi: ExtensionAPI) {
+	/** Unsubscribers from every `pi.on()`; drained on session_shutdown (AGENTS §5). */
+	const unsubscribers: Array<() => void> = [];
+
+	/** Retain a `pi.on()` return value; older engine typings declare it void. */
+	const track = (result: unknown): void => {
+		if (typeof result === "function") unsubscribers.push(result as () => void);
+	};
+
 	let config = loadConfig();
 	let current: ChildProcess | null = null;
 	let speakSeq = 0;
@@ -219,7 +227,7 @@ export default function (pi: ExtensionAPI) {
 	let lastSpokenAt = 0;
 
 	// Speak the final assistant message once the agent fully settles
-	pi.on("agent_settled", async (_event, ctx) => {
+	track(pi.on("agent_settled", async (_event, ctx) => {
 		if (!config.enabled) return;
 		const branch = ctx.sessionManager.getBranch();
 		for (let i = branch.length - 1; i >= 0; i--) {
@@ -235,14 +243,15 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 		}
-	});
+	}));
 
 	// New user prompt interrupts playback
-	pi.on("agent_start", async () => {
+	track(pi.on("agent_start", async () => {
 		stopSpeaking();
-	});
+	}));
 
 	pi.on("session_shutdown", async () => {
+		while (unsubscribers.length > 0) unsubscribers.pop()?.();
 		stopSpeaking();
 	});
 
@@ -901,8 +910,8 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("session_start", async (_event, ctx) => {
+	track(pi.on("session_start", async (_event, ctx) => {
 		config = loadConfig();
 		refreshTtsStatus(ctx);
-	});
+	}));
 }
