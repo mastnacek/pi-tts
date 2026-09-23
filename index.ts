@@ -2,6 +2,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { writeFile, unlink } from "node:fs/promises";
@@ -51,7 +52,7 @@ function getPython(): string {
 		cachedPython = "python";
 		return cachedPython;
 	}
-	const delimiter = process.platform === "win32" ? ";" : ":";
+	const delimiter = ":";
 	const dirs = (process.env.PATH ?? "").split(delimiter);
 	for (const candidate of ["python3", "python"]) {
 		if (dirs.some((d) => existsSync(join(d, candidate)))) {
@@ -411,7 +412,7 @@ export default function (pi: ExtensionAPI) {
 								"C-3PO droid profil (Haas 10ms delay + 1.6kHz peak + flanger)",
 						},
 						{
-							value: "vader depth",
+							value: "vader depth ",
 							label: "vader depth",
 							description: "nastavit hloubku posunu půltónů",
 						},
@@ -612,9 +613,28 @@ export default function (pi: ExtensionAPI) {
 
 			// První slovo — podpříkazy
 			const typed = (tokens[0] ?? "").toLowerCase();
-			const items = Object.entries(AUDIO_DOCS)
-				.filter(([key]) => key.startsWith(typed))
-				.map(([value, description]) => ({ value, label: value, description }));
+			const NON_TERMINAL = new Set([
+				"backend",
+				"vader",
+				"vader2",
+				"vader3",
+				"c3po",
+				"prosody",
+				"rate",
+				"voice",
+				"say",
+			]);
+			const items: AutocompleteItem[] = [];
+			for (const [key, description] of Object.entries(AUDIO_DOCS)) {
+				if (key.toLowerCase().startsWith(typed)) {
+					const hasNext = NON_TERMINAL.has(key);
+					items.push({
+						value: hasNext ? `${key} ` : key,
+						label: key,
+						description,
+					});
+				}
+			}
 			return items.length > 0 ? items : null;
 		},
 		handler: async (args, ctx) => {
