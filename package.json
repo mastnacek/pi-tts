@@ -1,32 +1,41 @@
 {
-	"name": "pi-tts",
-	"version": "1.1.1",
-	"description": "Pi agent TTS: speaks the final answer via Edge cloud voices or native Windows (WinRT/SAPI5)/Linux engines, with a Darth Vader ffmpeg mode. Controlled by /audio.",
-	"type": "module",
-	"license": "MIT",
-	"author": "mastnacek",
-	"keywords": [
-		"pi-package",
-		"pi",
-		"pi-extension",
-		"tts",
-		"text-to-speech",
-		"edge-tts",
-		"vader"
-	],
-	"files": [
-		"index.ts",
-		"speak.py",
-		"winrt_speak.ps1",
-		"requirements.txt",
-		"README.md",
-		"LICENSE",
-		"assets"
-	],
-	"pi": {
-		"extensions": ["./index.ts"]
-	},
-	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "*"
-	}
+  "name": "pi-tts",
+  "version": "1.1.1",
+  "description": "Pi agent TTS: speaks the final answer via Edge cloud voices or native Windows (WinRT/SAPI5)/Linux engines, with a Darth Vader ffmpeg mode. Controlled by /audio.",
+  "type": "module",
+  "license": "MIT",
+  "author": "mastnacek",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "tts",
+    "text-to-speech",
+    "edge-tts",
+    "vader"
+  ],
+  "files": [
+    "index.ts",
+    "speak.py",
+    "winrt_speak.ps1",
+    "requirements.txt",
+    "README.md",
+    "LICENSE",
+    "assets"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "test": "node --test test/**/*.test.js"
+  }
 }
