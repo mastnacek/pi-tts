@@ -1,116 +1,33 @@
+/**
+ * pi-tts — composition root.
+ *
+ * Layout:
+ *   index.ts            wiring: events, statusline, /audio registration
+ *   src/config.ts       cascade load/save (defaults <- global <- project)
+ *   src/speak.ts        spawn speak.py, cooperative stop, text extraction
+ *   src/completions.ts  /audio menu incl. `--global` prefix support
+ *   src/command.ts      /audio dispatch table
+ *   src/command-vader.ts Vader / C-3PO DSP profiles
+ *   src/types.ts        TtsConfig
+ */
+
 import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { writeFile, unlink } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { loadConfig, saveConfig } from "./src/config.js";
+import { registerAudioCommand, type AudioCommandDeps } from "./src/command.js";
+import {
+	extractText,
+	getLastError,
+	getLastSpokenAt,
+	getPlatformLabel,
+	speak,
+	stopSpeaking,
+} from "./src/speak.js";
+import type { TtsConfig } from "./src/types.js";
 
-interface TtsConfig {
-	enabled: boolean;
-	backend: "edge" | "native";
-	voice: string;
-	rate: string;
-	pitch: string;
-	vader: boolean;
-	vaderProfile: "classic" | "vader2" | "vader3" | "c3po";
-	/** Extra Vader pitch shift in semitones; null = per-backend default. */
-	vaderDepth: number | null;
-	prosody: boolean;
-	maxLen: number;
-}
-
-const DEFAULTS: TtsConfig = {
-	enabled: false,
-	backend: "edge",
-	voice: process.env.PI_TTS_VOICE ?? "cs-CZ-AntoninNeural",
-	rate: process.env.PI_TTS_RATE ?? "+0%",
-	pitch: process.env.PI_TTS_PITCH ?? "+0Hz",
-	vader: false,
-	vaderProfile:
-		(process.env.PI_TTS_VADER_PROFILE as
-			| "classic"
-			| "vader2"
-			| "vader3"
-			| "c3po") ?? "classic",
-	vaderDepth: null,
-	prosody: true,
-	maxLen: 1500,
-};
-
-const EXT_DIR = dirname(fileURLToPath(import.meta.url));
-const SPEAK_PY = join(EXT_DIR, "speak.py");
-let cachedPython: string | null = null;
-// Windows ships "python"; Linux distros often only have "python3".
-function getPython(): string {
-	if (cachedPython !== null) return cachedPython;
-	if (process.platform === "win32") {
-		cachedPython = "python";
-		return cachedPython;
-	}
-	const delimiter = ":";
-	const dirs = (process.env.PATH ?? "").split(delimiter);
-	for (const candidate of ["python3", "python"]) {
-		if (dirs.some((d) => existsSync(join(d, candidate)))) {
-			cachedPython = candidate;
-			return cachedPython;
-		}
-	}
-	cachedPython = "python3";
-	return cachedPython;
-}
-// Cooperative stop flag, scoped to this pi process (never stale across restarts).
-const STOP_FILE = join(tmpdir(), `pi-tts-stop-${process.pid}`);
-const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-tts.json");
-
-function loadConfig(): TtsConfig {
-	try {
-		if (existsSync(CONFIG_PATH)) {
-			const parsed = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
-			return {
-				...DEFAULTS,
-				...parsed,
-				vaderProfile: parsed.vaderProfile ?? "classic",
-			};
-		}
-	} catch {
-		// corrupted config -> defaults
-	}
-	return { ...DEFAULTS };
-}
-
-function saveConfig(cfg: TtsConfig) {
-	try {
-		mkdirSync(dirname(CONFIG_PATH), { recursive: true });
-		writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
-	} catch {
-		// non-fatal
-	}
-}
-
-/** Extract plain text from an assistant message. */
-function extractText(message: any): string {
-	if (!message || message.role !== "assistant") return "";
-	if (typeof message.content === "string") return message.content;
-	if (!Array.isArray(message.content)) return "";
-	const parts: string[] = [];
-	for (const block of message.content) {
-		if (typeof block === "string") parts.push(block);
-		else if (block?.type === "text" && typeof block.text === "string")
-			parts.push(block.text);
-	}
-	return parts.join("\n");
-}
-
-function getPlatformLabel(): string {
-	if (process.platform === "win32") return "Windows";
-	if (process.platform === "darwin") return "macOS";
-	return "Linux";
-}
+export type { TtsConfig } from "./src/types.js";
 
 export default function (pi: ExtensionAPI) {
 	/** Unsubscribers from every `pi.on()`; drained on session_shutdown (AGENTS §5). */
@@ -121,797 +38,76 @@ export default function (pi: ExtensionAPI) {
 		if (typeof result === "function") unsubscribers.push(result as () => void);
 	};
 
-	let config = loadConfig();
-	let current: ChildProcess | null = null;
-	let speakSeq = 0;
+	/** Defaults + global at construction; the project layer joins on session_start. */
+	let config: TtsConfig = loadConfig();
+	let currentCwd: string | undefined;
 
-	function stopSpeaking() {
-		// Cooperative stop first: python is polling this file and kills its own
-		// player (works even if the parent chain is already gone/stale).
-		try {
-			writeFileSync(STOP_FILE, String(Date.now()));
-		} catch {
-			/* ignore write failure */
+	const patchConfig = (
+		patch: Partial<TtsConfig>,
+		isGlobal: boolean,
+		cwd?: string,
+	): void => {
+		config = { ...config, ...patch };
+		saveConfig(config, isGlobal, cwd ?? currentCwd);
+	};
+
+	const refreshTtsStatus = (ctx: ExtensionContext): void => {
+		if (!ctx.hasUI) return;
+		if (!config.enabled) {
+			ctx.ui.setStatus("pi-tts", undefined);
+			return;
 		}
-		if (current && current.exitCode === null) {
-			if (process.platform === "win32") {
-				// current.kill() only terminates python.exe — the spawned
-				// powershell/ffplay player is orphaned and keeps playing the file.
-				// taskkill /T takes down the whole tree, /F because we mean it.
-				if (current.pid !== undefined) {
-					spawn("taskkill", ["/pid", String(current.pid), "/T", "/F"], {
-						stdio: "ignore",
-					});
-				}
-				current.kill();
-			} else {
-				// POSIX: python was spawned detached (process-group leader),
-				// so a negative-pid kill takes ffplay down with it.
-				try {
-					if (current.pid !== undefined) process.kill(-current.pid, "SIGTERM");
-				} catch {
-					current.kill();
-				}
-			}
-		}
-		current = null;
-	}
+		let vTag = "vader";
+		if (config.vaderProfile === "c3po") vTag = "c3po";
+		else if (config.vaderProfile === "vader2") vTag = "vader2";
+		else if (config.vaderProfile === "vader3") vTag = "vader3";
+		ctx.ui.setStatus(
+			"pi-tts",
+			config.vader ? `🔊 ${config.voice} ${vTag}` : `🔊 ${config.voice}`,
+		);
+	};
 
-	async function speak(text: string) {
-		if (!text.trim()) return;
-		stopSpeaking();
-
-		// Clear any stale stop flag so the new playback isn't instantly killed.
-		// Missing file is the expected case — ignore unlink failures.
-		try {
-			await unlink(STOP_FILE);
-		} catch {
-			/* ignore unlink failure */
-		}
-
-		// Write text to temp file — avoids argv length/quoting issues
-		const seq = ++speakSeq;
-		const tmpFile = join(tmpdir(), `pi-tts-${process.pid}-${seq}.txt`);
-		await writeFile(tmpFile, text, "utf-8");
-
-		const args = [
-			SPEAK_PY,
-			"--file",
-			tmpFile,
-			"--backend",
-			config.backend,
-			"--voice",
-			config.voice,
-			"--rate",
-			config.rate,
-			"--pitch",
-			config.pitch,
-			config.vader ? "--vader" : "--no-vader",
-			"--vader-profile",
-			config.vaderProfile ?? "classic",
-			config.prosody === false ? "--no-prosody" : "--prosody",
-		];
-		if (config.vader && config.vaderDepth !== null) {
-			args.push("--depth", String(config.vaderDepth));
-		}
-
-		const child = spawn(getPython(), args, {
-			detached: process.platform !== "win32",
-			stdio: ["ignore", "ignore", "pipe"],
-			env: {
-				...process.env,
-				PI_TTS_MAXLEN: String(config.maxLen),
-				PI_TTS_STOP_FILE: STOP_FILE,
-			},
-		});
-		current = child;
-		let stderr = "";
-		child.stderr?.on("data", (d) => (stderr += d));
-		child.on("close", (code, signal) => {
-			if (current === child) current = null;
-			unlink(tmpFile).catch(() => {});
-			// speak.py also writes warnings (fallbacks it recovered from) to
-			// stderr — only a non-zero exit means playback actually failed.
-			if (code !== 0 && signal === null && stderr.trim()) {
-				// surfaced lazily via /audio status
-				lastError = stderr.trim();
-			}
-		});
-		child.on("error", (err) => {
-			if (current === child) current = null;
-			lastError = String(err);
-		});
-	}
-
-	let lastError = "";
-	let lastSpokenAt = 0;
-
-	// Speak the final assistant message once the agent fully settles
+	/** Speak the final assistant message once the agent fully settles. */
 	track(pi.on("agent_settled", async (_event, ctx) => {
 		if (!config.enabled) return;
 		const branch = ctx.sessionManager.getBranch();
 		for (let i = branch.length - 1; i >= 0; i--) {
-			const entry: any = branch[i];
-			const msg = entry?.message ?? entry;
-			if (msg?.role === "assistant") {
-				const text = extractText(msg);
-				if (text) {
-					lastSpokenAt = Date.now();
-					lastError = "";
-					await speak(text);
-					return;
-				}
-			}
+			const entry = branch[i] as { message?: unknown } | undefined;
+			const message = entry?.message ?? entry;
+			if ((message as { role?: string } | undefined)?.role !== "assistant") continue;
+			const text = extractText(message);
+			if (!text) continue;
+			await speak(text, config);
+			return;
 		}
 	}));
 
-	// New user prompt interrupts playback
-	track(pi.on("agent_start", async () => {
+	// A new user prompt interrupts playback.
+	track(pi.on("agent_start", () => {
 		stopSpeaking();
 	}));
 
-	pi.on("session_shutdown", async () => {
+	track(pi.on("session_start", async (_event, ctx: ExtensionContext) => {
+		currentCwd = ctx.cwd;
+		config = loadConfig(ctx.cwd);
+		refreshTtsStatus(ctx);
+	}));
+
+	pi.on("session_shutdown", () => {
 		while (unsubscribers.length > 0) unsubscribers.pop()?.();
 		stopSpeaking();
 	});
 
-	const refreshTtsStatus = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI) return;
-		if (config.enabled) {
-			let vTag = "vader";
-			if (config.vaderProfile === "c3po") {
-				vTag = "c3po";
-			} else if (config.vaderProfile === "vader2") {
-				vTag = "vader2";
-			} else if (config.vaderProfile === "vader3") {
-				vTag = "vader3";
-			}
-			ctx.ui.setStatus(
-				"pi-tts",
-				config.vader ? `🔊 ${config.voice} ${vTag}` : `🔊 ${config.voice}`,
-			);
-		} else {
-			ctx.ui.setStatus("pi-tts", undefined);
-		}
+	const deps: AudioCommandDeps = {
+		getConfig: () => config,
+		patchConfig,
+		refreshStatus: refreshTtsStatus,
+		speak: (text) => speak(text, config),
+		stopSpeaking,
+		getLastError,
+		getLastSpokenAt,
+		getPlatformLabel,
 	};
 
-	const AUDIO_DOCS: Record<string, string> = {
-		on: "zapne automatické předčítání odpovědí asistenta (TTS)",
-		off: "vypne předčítání odpovědí (TTS)",
-		stop: "okamžitě zastaví probíhající přehrávání",
-		status: "zobrazí aktuální stav TTS, hlas a případné chyby",
-		voice: "nastaví hlas pro syntézu řeči",
-		backend: "výběr enginu: edge (cloud) nebo native (offline)",
-		vader:
-			"Darth Vader / DSP efekt (on | off | classic | vader2 | vader3 | c3po | depth <půltóny>)",
-		vader2:
-			"rychlé zapnutí Vader2 (temná sub-oktáva + robotický tremolo flanger)",
-		vader3: "rychlé zapnutí Vader3 (vader2 profil)",
-		c3po:
-			"rychlé zapnutí C-3PO droid efektu (Haas delay + pásmový filtr + flanger)",
-		prosody: "přirozená modulace intonace a tempa u Edge hlasů (on/off)",
-		rate: "rychlost řeči (např. +10%, -15%)",
-		say: "okamžitě přečte zadaný text",
-		help: "zobrazí podrobnou nápovědu",
-	};
-
-	pi.registerCommand("audio", {
-		description:
-			"pi-tts: předčítání odpovědí asistenta (TTS) přes Edge cloud nebo offline hlasy, Darth Vader režim",
-		getArgumentCompletions: (prefix: string) => {
-			const tokens = prefix.split(/\s+/).filter(Boolean);
-			const trailingSpace = /\s$/.test(prefix);
-			const normalizedPrefix = tokens.join(" ").toLowerCase();
-
-			// Třetí slovo — např. /audio vader depth <auto|-1|-2|-3|-4>
-			if (tokens.length > 2 || (trailingSpace && tokens.length === 2)) {
-				const cmd = tokens[0]?.toLowerCase();
-				const sub = tokens[1]?.toLowerCase();
-
-				if (cmd === "vader" && sub === "depth") {
-					const items = [
-						{
-							value: "vader depth auto",
-							label: "vader depth auto",
-							description: "automatická hloubka (0 na edge, -3 na native)",
-						},
-						{
-							value: "vader depth -1",
-							label: "vader depth -1",
-							description: "mírný posun (-1 půltón)",
-						},
-						{
-							value: "vader depth -2",
-							label: "vader depth -2",
-							description: "střední posun (-2 půltóny)",
-						},
-						{
-							value: "vader depth -3",
-							label: "vader depth -3",
-							description: "klasický Vader (-3 půltóny)",
-						},
-						{
-							value: "vader depth -4",
-							label: "vader depth -4",
-							description: "hluboký Vader (-4 půltóny)",
-						},
-					];
-					const filtered = items.filter((i) =>
-						i.value.toLowerCase().startsWith(normalizedPrefix),
-					);
-					return filtered.length > 0 ? filtered : null;
-				}
-				return null;
-			}
-
-			// Druhé slovo — kontextové dokončování podle podpříkazu
-			if (tokens.length > 1 || (trailingSpace && tokens.length === 1)) {
-				const cmd = tokens[0]?.toLowerCase();
-
-				if (cmd === "prosody") {
-					const items = [
-						{
-							value: "prosody on",
-							label: "prosody on",
-							description: "zapnout konverzační modulaci intonace a tempa",
-						},
-						{
-							value: "prosody off",
-							label: "prosody off",
-							description: "vypnout modulaci (monotónní tempo)",
-						},
-					];
-					const filtered = items.filter((i) =>
-						i.value.toLowerCase().startsWith(normalizedPrefix),
-					);
-					return filtered.length > 0 ? filtered : null;
-				}
-
-				if (cmd === "backend") {
-					const items = [
-						{
-							value: "backend edge",
-							label: "backend edge",
-							description: "Microsoft Edge cloudové neurální hlasy",
-						},
-						{
-							value: "backend native",
-							label: "backend native",
-							description: "offline systémové hlasy (Windows WinRT/SAPI5, Linux)",
-						},
-					];
-					const filtered = items.filter((i) =>
-						i.value.toLowerCase().startsWith(normalizedPrefix),
-					);
-					return filtered.length > 0 ? filtered : null;
-				}
-
-				if (cmd === "vader") {
-					const items = [
-						{
-							value: "vader on",
-							label: "vader on",
-							description: "zapnout Vader efekt",
-						},
-						{
-							value: "vader off",
-							label: "vader off",
-							description: "vypnout Vader efekt",
-						},
-						{
-							value: "vader classic",
-							label: "vader classic",
-							description: "klasický Darth Vader profil (EQ + echo + flanger)",
-						},
-						{
-							value: "vader vader2",
-							label: "vader vader2",
-							description:
-								"Vader2 profil (temná sub-oktáva + robotický tremolo flanger)",
-						},
-						{
-							value: "vader vader3",
-							label: "vader vader3",
-							description: "Vader3 profil (vader2 sub-oktáva + robotický flanger)",
-						},
-						{
-							value: "vader c3po",
-							label: "vader c3po",
-							description:
-								"C-3PO droid profil (Haas 10ms delay + 1.6kHz peak + flanger)",
-						},
-						{
-							value: "vader depth ",
-							label: "vader depth",
-							description: "nastavit hloubku posunu půltónů",
-						},
-					];
-					const filtered = items.filter((i) =>
-						i.value.toLowerCase().startsWith(normalizedPrefix),
-					);
-					return filtered.length > 0 ? filtered : null;
-				}
-
-				if (cmd === "vader2") {
-					const items = [
-						{
-							value: "vader2 on",
-							label: "vader2 on",
-							description: "zapnout Vader2 (sub-oktáva + robotické tremolo)",
-						},
-						{
-							value: "vader2 off",
-							label: "vader2 off",
-							description: "vypnout Vader efekt",
-						},
-					];
-					const filtered = items.filter((i) =>
-						i.value.toLowerCase().startsWith(normalizedPrefix),
-					);
-					return filtered.length > 0 ? filtered : null;
-				}
-
-				if (cmd === "vader3") {
-					const items = [
-						{
-							value: "vader3 on",
-							label: "vader3 on",
-							description: "zapnout Vader3 (vader2 profil)",
-						},
-						{
-							value: "vader3 off",
-							label: "vader3 off",
-							description: "vypnout Vader efekt",
-						},
-					];
-					const filtered = items.filter((i) =>
-						i.value.toLowerCase().startsWith(normalizedPrefix),
-					);
-					return filtered.length > 0 ? filtered : null;
-				}
-
-				if (cmd === "c3po") {
-					const items = [
-						{
-							value: "c3po on",
-							label: "c3po on",
-							description: "zapnout C-3PO droid režim",
-						},
-						{
-							value: "c3po off",
-							label: "c3po off",
-							description: "vypnout C-3PO efekt",
-						},
-					];
-					const filtered = items.filter((i) =>
-						i.value.toLowerCase().startsWith(normalizedPrefix),
-					);
-					return filtered.length > 0 ? filtered : null;
-				}
-
-				if (cmd === "rate") {
-					const items = [
-						{
-							value: "rate +0%",
-							label: "rate +0%",
-							description: "výchozí normální rychlost",
-						},
-						{
-							value: "rate +10%",
-							label: "rate +10%",
-							description: "+10 % zrychlení",
-						},
-						{
-							value: "rate +20%",
-							label: "rate +20%",
-							description: "+20 % zrychlení",
-						},
-						{
-							value: "rate -10%",
-							label: "rate -10%",
-							description: "-10 % zpomalení",
-						},
-						{
-							value: "rate -20%",
-							label: "rate -20%",
-							description: "-20 % zpomalení",
-						},
-					];
-					const filtered = items.filter((i) =>
-						i.value.toLowerCase().startsWith(normalizedPrefix),
-					);
-					return filtered.length > 0 ? filtered : null;
-				}
-
-				if (cmd === "voice") {
-					const items = [
-						// Czech voices (Edge & Native)
-						{
-							value: "voice cs-CZ-AntoninNeural",
-							label: "voice cs-CZ-AntoninNeural",
-							description: "český mužský Antonín (Edge Cloud)",
-						},
-						{
-							value: "voice cs-CZ-VlastaNeural",
-							label: "voice cs-CZ-VlastaNeural",
-							description: "český ženský Vlasta (Edge Cloud)",
-						},
-						{
-							value: "voice Microsoft Jakub",
-							label: "voice Microsoft Jakub",
-							description: "český mužský Jakub (Windows offline OneCore)",
-						},
-						{
-							value: "voice cs-CZ",
-							label: "voice cs-CZ",
-							description: "český systémový výchozí (offline)",
-						},
-						{
-							value: "voice cs",
-							label: "voice cs",
-							description: "český offline hlas (Linux espeak-ng)",
-						},
-
-						// Slovak voices (Edge & Native)
-						{
-							value: "voice sk-SK-LukasNeural",
-							label: "voice sk-SK-LukasNeural",
-							description: "slovenský mužský Lukáš (Edge Cloud)",
-						},
-						{
-							value: "voice sk-SK-ViktoriaNeural",
-							label: "voice sk-SK-ViktoriaNeural",
-							description: "slovenský ženský Viktória (Edge Cloud)",
-						},
-						{
-							value: "voice Microsoft Laura",
-							label: "voice Microsoft Laura",
-							description: "slovenský ženský Laura (Windows offline OneCore)",
-						},
-						{
-							value: "voice sk-SK",
-							label: "voice sk-SK",
-							description: "slovenský systémový výchozí (offline)",
-						},
-						{
-							value: "voice sk",
-							label: "voice sk",
-							description: "slovenský offline hlas (Linux espeak-ng)",
-						},
-
-						// English & other popular voices
-						{
-							value: "voice en-US-GuyNeural",
-							label: "voice en-US-GuyNeural",
-							description: "anglický mužský Guy (Edge Cloud)",
-						},
-						{
-							value: "voice en-US-JennyNeural",
-							label: "voice en-US-JennyNeural",
-							description: "anglický ženský Jenny (Edge Cloud)",
-						},
-						{
-							value: "voice en-US-AvaNeural",
-							label: "voice en-US-AvaNeural",
-							description: "anglický ženský Ava (Edge Cloud)",
-						},
-						{
-							value: "voice en-US-EmmaNeural",
-							label: "voice en-US-EmmaNeural",
-							description: "anglický ženský Emma (Edge Cloud)",
-						},
-						{
-							value: "voice Microsoft Zira",
-							label: "voice Microsoft Zira",
-							description: "anglický ženský Zira (Windows offline)",
-						},
-						{
-							value: "voice Microsoft David",
-							label: "voice Microsoft David",
-							description: "anglický mužský David (Windows offline)",
-						},
-					];
-					const filtered = items.filter((i) =>
-						i.value.toLowerCase().startsWith(normalizedPrefix),
-					);
-					return filtered.length > 0 ? filtered : null;
-				}
-
-				return null;
-			}
-
-			// První slovo — podpříkazy
-			const typed = (tokens[0] ?? "").toLowerCase();
-			const NON_TERMINAL = new Set([
-				"backend",
-				"vader",
-				"vader2",
-				"vader3",
-				"c3po",
-				"prosody",
-				"rate",
-				"voice",
-				"say",
-			]);
-			const items: AutocompleteItem[] = [];
-			for (const [key, description] of Object.entries(AUDIO_DOCS)) {
-				if (key.toLowerCase().startsWith(typed)) {
-					const hasNext = NON_TERMINAL.has(key);
-					items.push({
-						value: hasNext ? `${key} ` : key,
-						label: key,
-						description,
-					});
-				}
-			}
-			return items.length > 0 ? items : null;
-		},
-		handler: async (args, ctx) => {
-			const [subRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
-			const sub = (subRaw ?? "").toLowerCase();
-			const value = rest.join(" ").trim();
-
-			switch (sub) {
-				case "on":
-					config.enabled = true;
-					saveConfig(config);
-					refreshTtsStatus(ctx);
-					ctx.ui.notify("Audio TTS: ZAPNUTO (ON)", "info");
-					break;
-				case "off":
-					config.enabled = false;
-					saveConfig(config);
-					stopSpeaking();
-					refreshTtsStatus(ctx);
-					ctx.ui.notify("Audio TTS: VYPNUTO (OFF)", "info");
-					break;
-				case "stop":
-					stopSpeaking();
-					ctx.ui.notify("Přehrávání zastaveno", "info");
-					break;
-				case "status":
-					ctx.ui.notify(
-						`TTS ${config.enabled ? "ON" : "OFF"} | backend=${config.backend} voice=${config.voice} rate=${config.rate} vader=${config.vader ? (config.vaderProfile ?? "classic") : "off"} depth=${config.vaderDepth ?? "auto"}` +
-							(lastSpokenAt
-								? ` | naposledy mluvil ${new Date(lastSpokenAt).toLocaleTimeString()}`
-								: "") +
-							(lastError ? ` | poslední chyba: ${lastError}` : ""),
-						"info",
-					);
-					break;
-				case "voice":
-					if (value) {
-						config.voice = value;
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify(`Hlas nastaven na: ${value}`, "info");
-					} else {
-						ctx.ui.notify(`Aktuální hlas: ${config.voice}`, "info");
-					}
-					break;
-				case "prosody": {
-					const valLower = value.toLowerCase();
-					if (valLower === "on" || valLower === "true" || valLower === "1") {
-						config.prosody = true;
-						saveConfig(config);
-						ctx.ui.notify("Konverzační prosodie: ZAPNUTO (ON)", "info");
-					} else if (
-						valLower === "off" ||
-						valLower === "false" ||
-						valLower === "0"
-					) {
-						config.prosody = false;
-						saveConfig(config);
-						ctx.ui.notify("Konverzační prosodie: VYPNUTO (OFF)", "info");
-					} else {
-						config.prosody = !config.prosody;
-						saveConfig(config);
-						ctx.ui.notify(
-							`Konverzační prosodie: ${config.prosody ? "ZAPNUTO (ON)" : "VYPNUTO (OFF)"}`,
-							"info",
-						);
-					}
-					break;
-				}
-				case "backend": {
-					const valLower = value.toLowerCase();
-					if (valLower === "edge" || valLower === "native") {
-						config.backend = valLower;
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify(
-							valLower === "edge"
-								? "Backend nastaven na Edge (cloudové neurální hlasy)"
-								: `Backend nastaven na native (offline ${getPlatformLabel()} hlasy)`,
-							"info",
-						);
-					} else {
-						ctx.ui.notify("Použití: /audio backend edge|native", "warning");
-					}
-					break;
-				}
-				case "c3po": {
-					const valLower = value.toLowerCase();
-					if (valLower === "off" || valLower === "false" || valLower === "0") {
-						config.vader = false;
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify("C-3PO hlas: VYPNUTO (OFF)", "info");
-					} else {
-						config.vader = true;
-						config.vaderProfile = "c3po";
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify(
-							"C-3PO droid režim: ZAPNUTO (ON) — Haas 10ms delay + 1.6kHz peak + flanger",
-							"info",
-						);
-					}
-					break;
-				}
-				case "vader2": {
-					const valLower = value.toLowerCase();
-					if (valLower === "off" || valLower === "false" || valLower === "0") {
-						config.vader = false;
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify("Vader hlas: VYPNUTO (OFF)", "info");
-					} else {
-						config.vader = true;
-						config.vaderProfile = "vader2";
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify(
-							"Vader2 režim: ZAPNUTO (ON) — temná sub-oktáva + robotický tremolo flanger",
-							"info",
-						);
-					}
-					break;
-				}
-				case "vader3": {
-					const valLower = value.toLowerCase();
-					if (valLower === "off" || valLower === "false" || valLower === "0") {
-						config.vader = false;
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify("Vader hlas: VYPNUTO (OFF)", "info");
-					} else {
-						config.vader = true;
-						config.vaderProfile = "vader3";
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify("Vader3 režim: ZAPNUTO (ON) [profil: vader2]", "info");
-					}
-					break;
-				}
-				case "vader": {
-					const tokens = value.split(/\s+/).filter(Boolean);
-					const mode = (tokens[0] ?? "").toLowerCase();
-					const arg = (tokens[1] ?? "").toLowerCase();
-
-					if (mode === "on" || mode === "true" || mode === "1") {
-						config.vader = true;
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify(
-							`Vader hlas: ZAPNUTO (ON) [profil: ${config.vaderProfile ?? "classic"}]`,
-							"info",
-						);
-					} else if (mode === "off" || mode === "false" || mode === "0") {
-						config.vader = false;
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify("Vader hlas: VYPNUTO (OFF)", "info");
-					} else if (mode === "c3po" || mode === "3") {
-						config.vader = true;
-						config.vaderProfile = "c3po";
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify(
-							"Vader profil: C-3PO (Haas delay + 1.6kHz peak + flanger)",
-							"info",
-						);
-					} else if (mode === "vader2" || mode === "2") {
-						config.vader = true;
-						config.vaderProfile = "vader2";
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify(
-							"Vader profil: VADER2 (temná sub-oktáva + robotický tremolo flanger)",
-							"info",
-						);
-					} else if (mode === "vader3" || mode === "3") {
-						config.vader = true;
-						config.vaderProfile = "vader3";
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify("Vader profil: VADER3 [profil: vader2]", "info");
-					} else if (mode === "classic" || mode === "vader1" || mode === "default") {
-						config.vader = true;
-						config.vaderProfile = "classic";
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify("Vader profil: CLASSIC (původní Darth Vader)", "info");
-					} else if (mode === "depth") {
-						if (arg === "auto" || !arg) {
-							config.vaderDepth = null;
-							saveConfig(config);
-							ctx.ui.notify("Vader hloubka: auto (0 na edge, -3 na native)", "info");
-						} else if (Number.isFinite(Number(arg))) {
-							config.vaderDepth = Number(arg);
-							saveConfig(config);
-							ctx.ui.notify(
-								`Vader hloubka: ${config.vaderDepth} půltónů (záporná = hlubší)`,
-								"info",
-							);
-						} else {
-							ctx.ui.notify(
-								`Vader hloubka je ${config.vaderDepth ?? "auto"}. Použití: /audio vader depth -3 (nebo auto)`,
-								"warning",
-							);
-						}
-					} else if (mode) {
-						ctx.ui.notify(
-							`Vader hlas je ${config.vader ? "ZAPNUT" : "VYPNUT"} (profil: ${config.vaderProfile ?? "classic"}, hloubka: ${config.vaderDepth ?? "auto"}). Použití: /audio vader on|off|classic|vader2|depth <půltóny>`,
-							"info",
-						);
-					} else {
-						config.vader = !config.vader;
-						saveConfig(config);
-						refreshTtsStatus(ctx);
-						ctx.ui.notify(
-							`Vader hlas: ${config.vader ? `ZAPNUTO (ON) [${config.vaderProfile ?? "classic"}]` : "VYPNUTO (OFF)"}`,
-							"info",
-						);
-					}
-					break;
-				}
-				case "rate":
-					if (/^[+-]\d+%$/.test(value)) {
-						config.rate = value;
-						saveConfig(config);
-						ctx.ui.notify(`Rychlost řeči nastavena na ${value}`, "info");
-					} else {
-						ctx.ui.notify("Použití: /audio rate +10% (nebo -10%)", "warning");
-					}
-					break;
-				case "say":
-					if (value) {
-						await speak(value);
-						ctx.ui.notify("Přehrávám text…", "info");
-					} else {
-						ctx.ui.notify("Použití: /audio say <text>", "warning");
-					}
-					break;
-				case "help":
-				default:
-					ctx.ui.notify(
-						[
-							`pi-tts — stav: ${config.enabled ? "ZAPNUTO (ON)" : "VYPNUTO (OFF)"}`,
-							"Předčítání finálních odpovědí asistenta pomocí hlasové syntézy.",
-							"",
-							"Příkazy:",
-							"/audio                  — tato nápověda + stav",
-							"/audio on|off           — zapne / vypne TTS",
-							"/audio stop             — okamžitě zastaví probíhající přehrávání",
-							"/audio status           — zobrazí podrobný stav a diagnostiku",
-							"/audio voice <název>    — nastavení hlasu (např. cs-CZ-AntoninNeural)",
-							"/audio backend edge|native — cloudový Edge nebo offline systémový engine",
-							"/audio vader on|off|depth <půltóny> — Darth Vader efekt",
-							"/audio rate ±N%         — rychlost řeči (např. +10%, -15%)",
-							"/audio say <text>       — okamžitě přečte zadaný text",
-							"",
-							`Nastavení: backend=${config.backend} | hlas=${config.voice} | rychlost=${config.rate} | vader=${config.vader ? "ON" : "OFF"}${config.vaderDepth === null ? "" : ` (${config.vaderDepth})`}`,
-							lastError ? `Poslední chyba: ${lastError}` : "Bez chyb.",
-						].join("\n"),
-						"info",
-					);
-			}
-		},
-	});
-
-	track(pi.on("session_start", async (_event, ctx) => {
-		config = loadConfig();
-		refreshTtsStatus(ctx);
-	}));
+	registerAudioCommand(pi, deps);
 }

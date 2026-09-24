@@ -16,6 +16,7 @@
   ],
   "files": [
     "index.ts",
+    "src",
     "speak.py",
     "winrt_speak.ps1",
     "requirements.txt",
@@ -36,6 +37,6 @@
     "typebox": "*"
   },
   "scripts": {
-    "test": "node --test test/**/*.test.js"
+    "test": "npx tsx --test test/**/*.test.js"
   }
 }
